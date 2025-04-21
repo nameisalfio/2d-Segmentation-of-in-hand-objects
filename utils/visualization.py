@@ -1,266 +1,184 @@
+#!/usr/bin/env python3
+"""
+Script per visualizzare alcuni campioni dal dataset di training e sovrapporre
+la maschera dell'oggetto in mano.
+"""
+
 import os
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
-import cv2
-from torchvision.transforms import functional as F
-from PIL import Image
-import random
 import sys
+import numpy as np
+import cv2
+import argparse
+import random
+from tqdm import tqdm
 
+# Aggiungi la directory principale al path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import BLUE_MASK_COLOR, MASK_ALPHA
+from config import *
 
-def visualize_prediction(image, masks, alpha=MASK_ALPHA):
+def visualize_samples(dataset_path, output_dir, num_samples=10, random_seed=42):
     """
-    Visualizza un'immagine con maschere sovrapposte
+    Visualizza e salva alcuni campioni dal dataset sovrapposti con le maschere.
     
     Args:
-        image: Immagine di input (PIL Image o tensore)
-        masks: Maschere predette
-        alpha: Opacità delle maschere
-        
-    Returns:
-        Immagine di visualizzazione
-    """
-    # Converti l'immagine in numpy se è un tensore
-    if isinstance(image, torch.Tensor):
-        if image.dim() == 3:
-            # Converti CHW in HWC
-            image = image.permute(1, 2, 0).cpu().numpy()
-        else:
-            # Prendi la prima immagine se viene fornito un batch
-            image = image[0].permute(1, 2, 0).cpu().numpy()
-    
-    # Converti in intervallo 0-255 e uint8
-    if image.max() <= 1.0:
-        image = (image * 255).astype(np.uint8)
-    else:
-        image = image.astype(np.uint8)
-    
-    # Crea una copia dell'immagine per la visualizzazione
-    vis_image = image.copy()
-    
-    # Crea un overlay della maschera
-    mask_overlay = np.zeros_like(vis_image)
-    
-    # Elabora ogni maschera
-    if isinstance(masks, torch.Tensor):
-        masks = masks.cpu().numpy()
-    
-    for i, mask in enumerate(masks):
-        if isinstance(mask, torch.Tensor):
-            mask = mask.cpu().numpy()
-        
-        # Ottieni la maschera binaria
-        if mask.ndim > 2:
-            mask = mask.squeeze()
-        
-        if mask.dtype != bool and mask.dtype != np.bool_:
-            mask = mask > 0.5
-        
-        # Applica il colore alla maschera
-        color_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
-        color_mask[mask] = BLUE_MASK_COLOR
-        
-        # Aggiungi all'overlay
-        mask_overlay = np.maximum(mask_overlay, color_mask)
-    
-    # Unisci la maschera con l'immagine
-    vis_image = cv2.addWeighted(vis_image, 1, mask_overlay, alpha, 0)
-    
-    return vis_image
-
-def visualize_dataset_samples(dataset, num_samples=5, save_path=None):
-    """
-    Visualizza campioni dal dataset
-    
-    Args:
-        dataset: Dataset da visualizzare
+        dataset_path: Percorso al file .npy del dataset
+        output_dir: Directory dove salvare le visualizzazioni
         num_samples: Numero di campioni da visualizzare
-        save_path: Percorso per salvare le visualizzazioni
+        random_seed: Seed per la selezione random dei campioni
     """
-    # Campiona indici casuali
-    indices = random.sample(range(len(dataset)), min(num_samples, len(dataset)))
+    # Crea la directory di output se non esiste
+    os.makedirs(output_dir, exist_ok=True)
     
-    # Crea una figura
-    fig, axes = plt.subplots(num_samples, 2, figsize=(12, 3*num_samples))
+    # Carica il dataset
+    print(f"Caricamento dataset da {dataset_path}...")
     
-    # Elabora ogni campione
-    for i, idx in enumerate(indices):
-        # Ottieni il campione
-        image, targets = dataset[idx]
+    try:
+        data = np.load(dataset_path, allow_pickle=True)
+        print(f"Caricati {len(data)} campioni.")
+    except Exception as e:
+        print(f"Errore nel caricare il dataset: {str(e)}")
+        return
+    
+    # Seleziona campioni casuali
+    random.seed(random_seed)
+    if num_samples > len(data):
+        num_samples = len(data)
+        print(f"Numero di campioni ridotto a {num_samples} (dimensione del dataset).")
+    
+    indices = random.sample(range(len(data)), num_samples)
+    
+    # Visualizza ogni campione
+    for i, idx in enumerate(tqdm(indices, desc="Visualizzando campioni")):
+        sample = data[idx]
         
-        # Converti l'immagine in numpy
-        if isinstance(image, torch.Tensor):
-            image_np = image.permute(1, 2, 0).cpu().numpy()
+        # Carica l'immagine
+        image_path = sample["image_path"]
+        try:
+            image = cv2.imread(image_path)
+            if image is None:
+                print(f"Impossibile leggere l'immagine: {image_path}")
+                continue
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        except Exception as e:
+            print(f"Errore nel caricare l'immagine {image_path}: {str(e)}")
+            continue
+        
+        # Ottieni la maschera
+        mask = sample["mask"]
+        
+        # Assicurati che la maschera abbia le dimensioni corrette
+        if mask.shape[:2] != image.shape[:2]:
+            mask = cv2.resize(mask, (image.shape[1], image.shape[0]), 
+                             interpolation=cv2.INTER_NEAREST)
+        
+        # Crea una visualizzazione combinata: immagine originale, maschera, sovrapposizione
+        
+        # 1. Immagine originale
+        orig_image = image.copy()
+        
+        # 2. Maschera a colori (per una migliore visualizzazione)
+        colored_mask = np.zeros_like(image)
+        colored_mask[mask > 0] = [0, 0, 255]  # Colore blu per la maschera
+        
+        # 3. Immagine con maschera sovrapposta
+        masked_image = image.copy()
+        alpha = 0.5  # Opacità della maschera
+        mask_bool = mask > 0
+        masked_image[mask_bool] = (masked_image[mask_bool] * (1 - alpha) + 
+                                  colored_mask[mask_bool] * alpha).astype(np.uint8)
+        
+        # Crea un'immagine composita con tutte e tre le visualizzazioni affiancate
+        composite = np.concatenate([orig_image, colored_mask, masked_image], axis=1)
+        
+        # Aggiungi informazioni come testo
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        font_color = (255, 255, 255)  # Bianco
+        font_thickness = 1
+        
+        # Informazioni da aggiungere
+        clip_name = sample.get("clip_name", "Unknown")
+        frame_id = sample.get("frame_id", "Unknown")
+        camera_id = sample.get("camera_id", "Unknown")
+        
+        info_text = f"Clip: {clip_name}, Frame: {frame_id}, Camera: {camera_id}"
+        
+        # Aggiungi il testo alla parte inferiore dell'immagine
+        text_size = cv2.getTextSize(info_text, font, font_scale, font_thickness)[0]
+        text_x = 10
+        text_y = composite.shape[0] - 10  # 10 pixel dal basso
+        
+        # Aggiungi un rettangolo nero dietro il testo per leggibilità
+        cv2.rectangle(composite, 
+                     (text_x - 5, text_y - text_size[1] - 5), 
+                     (text_x + text_size[0] + 5, text_y + 5), 
+                     (0, 0, 0), 
+                     -1)  # -1 per riempire il rettangolo
+        
+        cv2.putText(composite, 
+                   info_text, 
+                   (text_x, text_y), 
+                   font, 
+                   font_scale, 
+                   font_color, 
+                   font_thickness)
+        
+        # Aggiungi intestazioni per chiarire ciascuna immagine
+        headers = ["Immagine originale", "Maschera", "Sovrapposizione"]
+        segment_width = composite.shape[1] // 3
+        
+        for idx, header in enumerate(headers):
+            text_size = cv2.getTextSize(header, font, font_scale, font_thickness)[0]
+            text_x = idx * segment_width + (segment_width - text_size[0]) // 2
+            text_y = 20  # 20 pixel dall'alto
             
-            # Converti in intervallo 0-255
-            if image_np.max() <= 1.0:
-                image_np = (image_np * 255).astype(np.uint8)
-        else:
-            image_np = image
+            # Aggiungi rettangolo nero
+            cv2.rectangle(composite, 
+                         (text_x - 5, text_y - text_size[1] - 5), 
+                         (text_x + text_size[0] + 5, text_y + 5), 
+                         (0, 0, 0), 
+                         -1)
+            
+            cv2.putText(composite, 
+                       header, 
+                       (text_x, text_y), 
+                       font, 
+                       font_scale, 
+                       font_color, 
+                       font_thickness)
         
-        # Ottieni le maschere
-        masks = targets['masks']
-        
-        # Converti le maschere in numpy se necessario
-        if isinstance(masks, torch.Tensor):
-            masks_np = masks.cpu().numpy()
-        else:
-            masks_np = masks
-        
-        # Crea visualizzazione
-        vis_image = visualize_prediction(image_np, masks_np)
-        
-        # Visualizza l'immagine originale
-        axes[i, 0].imshow(image_np)
-        axes[i, 0].set_title(f"Immagine Originale")
-        axes[i, 0].axis('off')
-        
-        # Visualizza l'immagine con maschere
-        axes[i, 1].imshow(vis_image)
-        axes[i, 1].set_title(f"Immagine con Maschere di Oggetti")
-        axes[i, 1].axis('off')
+        # Salva l'immagine composita
+        output_file = os.path.join(output_dir, f"sample_{i+1:03d}.jpg")
+        cv2.imwrite(output_file, cv2.cvtColor(composite, cv2.COLOR_RGB2BGR))
     
-    # Adatta il layout
-    plt.tight_layout()
-    
-    # Salva se viene fornito un percorso
-    if save_path:
-        plt.savefig(save_path)
-        print(f"Visualizzazione salvata in {save_path}")
-    
-    # Mostra la figura
-    plt.show()
+    print(f"Visualizzazioni salvate in {output_dir}")
 
-def visualize_training_history(history, save_path=None):
-    """
-    Visualizza lo storico dell'addestramento
+def main():
+    parser = argparse.ArgumentParser(description='Visualizza campioni dal dataset HOT3D con maschere')
+    parser.add_argument('--dataset', choices=['train', 'val', 'test'], default='train',
+                        help='Dataset da visualizzare (train, val o test)')
+    parser.add_argument('--num_samples', type=int, default=10,
+                        help='Numero di campioni da visualizzare')
+    parser.add_argument('--output_dir', default='visualizations',
+                        help='Directory dove salvare le visualizzazioni')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Seed per la selezione random dei campioni')
     
-    Args:
-        history: Dizionario con lo storico dell'addestramento
-        save_path: Percorso per salvare la visualizzazione
-    """
-    # Crea una figura
-    plt.figure(figsize=(10, 8))
+    args = parser.parse_args()
     
-    # Visualizza le metriche
-    plt.subplot(2, 1, 1)
-    plt.plot(history['train_loss'])
-    plt.title('Loss di Addestramento')
-    plt.xlabel('Epoca')
-    plt.ylabel('Loss')
-    
-    plt.subplot(2, 1, 2)
-    plt.plot(history['val_miou'])
-    plt.title('mIoU di Validazione')
-    plt.xlabel('Epoca')
-    plt.ylabel('mIoU')
-    
-    # Adatta il layout
-    plt.tight_layout()
-    
-    # Salva se viene fornito un percorso
-    if save_path:
-        plt.savefig(save_path)
-        print(f"Visualizzazione salvata in {save_path}")
-    
-    # Mostra la figura
-    plt.show()
-
-def visualize_test_predictions(model, test_dataset, indices=None, num_samples=5, save_dir=None):
-    """
-    Visualizza predizioni su campioni di test
-    
-    Args:
-        model: Modello addestrato
-        test_dataset: Dataset di test
-        indices: Indici specifici da visualizzare (se None, vengono usati campioni casuali)
-        num_samples: Numero di campioni da visualizzare
-        save_dir: Directory per salvare le visualizzazioni
-    """
-    # Campiona indici casuali se non forniti
-    if indices is None:
-        indices = random.sample(range(len(test_dataset)), min(num_samples, len(test_dataset)))
+    # Determina il percorso del dataset in base all'argomento
+    if args.dataset == 'train':
+        dataset_path = TRAIN_CACHE_PATH
+    elif args.dataset == 'val':
+        dataset_path = VAL_CACHE_PATH
     else:
-        indices = indices[:num_samples]
+        dataset_path = TEST_CACHE_PATH
     
-    # Crea directory di salvataggio se fornita
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
+    # Crea la directory di output completa
+    output_dir = os.path.join(args.output_dir, args.dataset)
     
-    # Elabora ogni campione
-    for i, idx in enumerate(indices):
-        # Ottieni il campione
-        image, targets = test_dataset[idx]
-        
-        # Effettua la predizione
-        pred_masks, pred_scores = model.predict(image, score_threshold=0.5)
-        
-        # Converti l'immagine in numpy
-        if isinstance(image, torch.Tensor):
-            image_np = image.permute(1, 2, 0).cpu().numpy()
-            
-            # Converti in intervallo 0-255
-            if image_np.max() <= 1.0:
-                image_np = (image_np * 255).astype(np.uint8)
-        else:
-            image_np = image
-        
-        # Ottieni le maschere ground truth
-        gt_masks = targets['masks']
-        
-        # Converti gt_masks in numpy se necessario
-        if isinstance(gt_masks, torch.Tensor):
-            gt_masks_np = gt_masks.cpu().numpy()
-        else:
-            gt_masks_np = gt_masks
-        
-        # Crea visualizzazioni
-        gt_vis = visualize_prediction(image_np, gt_masks_np)
-        pred_vis = visualize_prediction(image_np, pred_masks)
-        
-        # Crea figura
-        plt.figure(figsize=(15, 5))
-        
-        # Visualizza l'immagine originale
-        plt.subplot(1, 3, 1)
-        plt.imshow(image_np)
-        plt.title("Immagine Originale")
-        plt.axis('off')
-        
-        # Visualizza il ground truth
-        plt.subplot(1, 3, 2)
-        plt.imshow(gt_vis)
-        plt.title("Ground Truth")
-        plt.axis('off')
-        
-        # Visualizza le predizioni
-        plt.subplot(1, 3, 3)
-        plt.imshow(pred_vis)
-        plt.title(f"Predizioni (n={len(pred_masks)})")
-        plt.axis('off')
-        
-        # Adatta il layout
-        plt.tight_layout()
-        
-        # Salva se viene fornita una directory
-        if save_dir:
-            save_path = os.path.join(save_dir, f"test_prediction_{i}.png")
-            plt.savefig(save_path)
-            print(f"Visualizzazione salvata in {save_path}")
-        
-        # Mostra la figura
-        plt.show()
+    # Visualizza i campioni
+    visualize_samples(dataset_path, output_dir, args.num_samples, args.seed)
 
-def save_visualization(fig, output_path):
-    """
-    Save the visualization figure to a specified path.
-    
-    Args:
-        fig: Matplotlib figure to save
-        output_path: Path to save the visualization
-    """
-    fig.savefig(output_path, bbox_inches='tight', dpi=300)
-    plt.close(fig)
+if __name__ == "__main__":
+    main()

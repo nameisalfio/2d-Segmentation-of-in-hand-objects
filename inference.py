@@ -1,162 +1,237 @@
 import os
 import sys
+import argparse
+import random
+import glob
+import cv2
 import numpy as np
-import torch
-import matplotlib.pyplot as plt
-from PIL import Image
+from tqdm import tqdm
+import json
 
-from config import MODEL_SAVE_PATH, VISUALIZATIONS_DIR, NUM_CLASSES
-from models.mask_rcnn import MaskRCNNModel
-from utils.visualization import visualize_prediction
+# Aggiungi la directory principale al path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def inference(image_path, threshold=0.5, output_path=None, model_path=None):
+from models import MaskRCNNModel
+from config import MODEL_SAVE_PATH, NUM_CLASSES, RESULTS_DIR
+
+def apply_mask(image, mask, color, alpha=0.5):
+    """Applica una maschera colorata all'immagine"""
+    colored_mask = np.zeros_like(image)
+    colored_mask[:, :] = color
+    
+    mask_image = np.where(mask[:, :, None] > 0, 
+                          cv2.addWeighted(image, 1-alpha, colored_mask, alpha, 0), 
+                          image)
+    
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(mask_image, contours, -1, color, 2)
+    
+    return mask_image
+
+def draw_predictions(image, predictions, class_names=None, score_threshold=0.5):
+    """Disegna le predizioni sull'immagine"""
+    masks = predictions['masks']
+    boxes = predictions['boxes']
+    scores = predictions['scores']
+    labels = predictions['labels']
+    
+    if len(scores) == 0:
+        return image.copy()
+    
+    output_image = image.copy()
+    
+    # Lista di colori per le diverse classi (BGR)
+    colors = [
+        (0, 255, 0),    # Verde
+        (255, 0, 0),    # Blu
+        (0, 0, 255),    # Rosso
+        (0, 255, 255),  # Giallo
+        (255, 0, 255),  # Magenta
+        (255, 255, 0),  # Ciano
+    ]
+    
+    for i in range(len(scores)):
+        if scores[i] < score_threshold:
+            continue
+        
+        color = colors[labels[i] % len(colors)]
+        
+        if masks is not None and len(masks) > 0:
+            mask = masks[i]
+            output_image = apply_mask(output_image, mask, color)
+
+    return output_image
+
+def process_hot3d_clip(model, clip_path, output_dir, class_names, num_frames=10, camera_id="214-1", threshold=0.5):
     """
-    Esegue l'inferenza su una singola immagine con distinzione tra classi
+    Processa un clip HOT3D selezionando un numero specificato di frame casuali
     
     Args:
-        image_path: Percorso dell'immagine di input
-        threshold: Soglia di confidenza per le predizioni
-        output_path: Percorso per salvare la visualizzazione
-        model_path: Percorso del modello da utilizzare (opzionale, usa MODEL_SAVE_PATH come default)
+        model: Modello Mask R-CNN
+        clip_path: Percorso alla cartella del clip
+        output_dir: Directory di output
+        class_names: Nomi delle classi
+        num_frames: Numero di frame casuali da selezionare
+        camera_id: ID della telecamera
+        threshold: Soglia di confidenza
+    
+    Returns:
+        Dictionary con i risultati delle predizioni
     """
-    # Controlla se l'immagine esiste
-    if not os.path.exists(image_path):
-        print(f"Errore: Immagine {image_path} non trovata")
-        return
+    clip_name = os.path.basename(clip_path)
+    clip_output_dir = os.path.join(output_dir, clip_name)
+    os.makedirs(clip_output_dir, exist_ok=True)
     
-    # Usa il percorso del modello specificato o quello di default
-    model_path = model_path or MODEL_SAVE_PATH
+    # Trova tutti i file immagine per la camera specificata
+    image_pattern = f"*.image_{camera_id}.jpg"
+    all_images = glob.glob(os.path.join(clip_path, image_pattern))
     
-    # Inizializza il modello
-    print("Inizializzazione del modello Mask R-CNN...")
-    mask_rcnn = MaskRCNNModel(num_classes=NUM_CLASSES, pretrained=False)
+    if not all_images:
+        print(f"Nessuna immagine trovata per camera {camera_id} in {clip_path}")
+        return {}
     
-    # Carica il modello addestrato
-    if not os.path.exists(model_path):
-        print(f"Errore: Modello addestrato non trovato in {model_path}")
-        return
+    # Seleziona casualmente un sottoinsieme di immagini
+    if num_frames < len(all_images):
+        random.seed(42)  # Per riproducibilità
+        selected_images = random.sample(all_images, num_frames)
+    else:
+        selected_images = all_images
     
-    mask_rcnn.load(model_path)
-    print(f"Modello caricato da {model_path}")
+    results = {}
     
-    # Carica l'immagine
-    print(f"Caricamento dell'immagine {image_path}...")
-    image = Image.open(image_path).convert("RGB")
-    image_tensor = torch.tensor(np.array(image)).permute(2, 0, 1).float() / 255.0
-    
-    # Esegui la predizione
-    print("Esecuzione dell'inferenza...")
-    predictions = mask_rcnn.predict(image_tensor, score_threshold=threshold)
-    
-    # Visualizza i risultati per classi separate
-    vis_images = mask_rcnn.visualize_predictions(image_tensor, predictions, threshold=threshold)
-    
-    # Salva la visualizzazione
-    if output_path:
-        # Determina la directory e il nome base del file
-        output_dir = os.path.dirname(output_path) if os.path.dirname(output_path) else '.'
-        os.makedirs(output_dir, exist_ok=True)
-        base_name = os.path.splitext(os.path.basename(output_path))[0]
+    for img_path in selected_images:
+        frame_id = os.path.basename(img_path).split('.')[0]
+        sample_id = f"{clip_name}_{frame_id}_{camera_id}"
         
-        # Crea figura per tutte le predizioni
-        plt.figure(figsize=(14, 10))
-        plt.imshow(vis_images['all'])
-        plt.title("Tutte le predizioni")
-        plt.axis('off')
-        plt.tight_layout()
-        all_path = os.path.join(output_dir, f"{base_name}_all.png")
-        plt.savefig(all_path)
-        plt.close()
+        # Carica l'immagine
+        image = cv2.imread(img_path)
+        if image is None:
+            print(f"Errore: Impossibile caricare l'immagine {img_path}")
+            continue
         
-        # Crea figura per oggetti non in mano (classe 1)
-        plt.figure(figsize=(14, 10))
-        plt.imshow(vis_images['not_in_hand'])
-        plt.title("Oggetti non in mano (Classe 1)")
-        plt.axis('off')
-        plt.tight_layout()
-        class1_path = os.path.join(output_dir, f"{base_name}_not_in_hand.png")
-        plt.savefig(class1_path)
-        plt.close()
+        # Esegui la predizione
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        predictions = model.predict(image_rgb, score_threshold=threshold)
         
-        # Crea figura per oggetti in mano (classe 2)
-        plt.figure(figsize=(14, 10))
-        plt.imshow(vis_images['in_hand'])
-        plt.title("Oggetti in mano (Classe 2)")
-        plt.axis('off')
-        plt.tight_layout()
-        class2_path = os.path.join(output_dir, f"{base_name}_in_hand.png")
-        plt.savefig(class2_path)
-        plt.close()
+        # Genera l'immagine con le predizioni
+        result_image = draw_predictions(image, predictions, class_names, threshold)
         
-        # Crea figura comparativa
-        plt.figure(figsize=(18, 8))
+        # Salva l'immagine
+        output_path = os.path.join(clip_output_dir, f"pred_{frame_id}_{camera_id}.png")
+        cv2.imwrite(output_path, result_image)
         
-        # Immagine originale
-        plt.subplot(1, 3, 1)
-        plt.imshow(image)
-        plt.title("Immagine Originale")
-        plt.axis('off')
+        # Salva le maschere separate
+        masks = []
+        for i, mask in enumerate(predictions['masks']):
+            if predictions['scores'][i] >= threshold:
+                mask_path = os.path.join(clip_output_dir, f"{frame_id}_{camera_id}_mask_{i}.png")
+                cv2.imwrite(mask_path, (mask * 255).astype(np.uint8))
+                
+                masks.append({
+                    "mask_path": mask_path,
+                    "score": float(predictions['scores'][i]),
+                    "label": int(predictions['labels'][i]),
+                    "box": predictions['boxes'][i].tolist()
+                })
         
-        # Oggetti non in mano
-        plt.subplot(1, 3, 2)
-        plt.imshow(vis_images['not_in_hand'])
-        n_class1 = len(predictions['not_in_hand']['masks'])
-        plt.title(f"Oggetti non in mano (n={n_class1})")
-        plt.axis('off')
-        
-        # Oggetti in mano
-        plt.subplot(1, 3, 3)
-        plt.imshow(vis_images['in_hand'])
-        n_class2 = len(predictions['in_hand']['masks'])
-        plt.title(f"Oggetti in mano (n={n_class2})")
-        plt.axis('off')
-        
-        # Salva la figura comparativa
-        plt.tight_layout()
-        comparison_path = os.path.join(output_dir, f"{base_name}_comparison.png")
-        plt.savefig(comparison_path)
-        plt.close()
-        
-        print(f"Visualizzazioni salvate in:")
-        print(f"  - {all_path}")
-        print(f"  - {class1_path}")
-        print(f"  - {class2_path}")
-        print(f"  - {comparison_path}")
+        # Salva i risultati
+        results[sample_id] = {
+            "image_path": img_path,
+            "output_path": output_path,
+            "masks": masks,
+            "num_predictions": len(masks)
+        }
     
-    # Stampa statistiche
-    n_total = len(predictions['all']['masks'])
-    n_not_in_hand = len(predictions['not_in_hand']['masks'])
-    n_in_hand = len(predictions['in_hand']['masks'])
-    
-    print("\nStatistiche di inferenza:")
-    print(f"Totale oggetti rilevati: {n_total}")
-    print(f"Oggetti non in mano (Classe 1): {n_not_in_hand}")
-    print(f"Oggetti in mano (Classe 2): {n_in_hand}")
-    
-    if n_not_in_hand > 0:
-        avg_score_not_in_hand = predictions['not_in_hand']['scores'].mean().item()
-        print(f"Score medio oggetti non in mano: {avg_score_not_in_hand:.4f}")
-    
-    if n_in_hand > 0:
-        avg_score_in_hand = predictions['in_hand']['scores'].mean().item()
-        print(f"Score medio oggetti in mano: {avg_score_in_hand:.4f}")
-    
-    return predictions, vis_images
+    return results
 
-if __name__ == "__main__":
-    # Se eseguito direttamente, processa gli argomenti della riga di comando
-    import argparse
+def main():
+    parser = argparse.ArgumentParser(description='Processa clip del dataset HOT3D')
+    parser.add_argument('--input_dir', type=str, required=True,
+                        help='Directory contenente le cartelle dei clip (es. ../hot3d/test_aria)')
+    parser.add_argument('--output_dir', type=str, default=os.path.join(RESULTS_DIR, "test_predictions"),
+                        help='Directory di output per i risultati')
+    parser.add_argument('--model', type=str, default=MODEL_SAVE_PATH,
+                        help='Percorso del file del modello')
+    parser.add_argument('--num_clips', type=int, default=100,
+                        help='Numero massimo di clip da processare')
+    parser.add_argument('--frames_per_clip', type=int, default=10,
+                        help='Numero di frame casuali da selezionare per ogni clip')
+    parser.add_argument('--camera_id', type=str, default="214-1",
+                        help='ID della telecamera da utilizzare')
+    parser.add_argument('--class_names', type=str, default="background,object",
+                        help='Nomi delle classi separati da virgola')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                        help='Soglia di confidenza per le predizioni')
     
-    parser = argparse.ArgumentParser(description="Inferenza con Mask R-CNN per segmentazione di oggetti in mano")
-    parser.add_argument("--image", required=True, help="Percorso dell'immagine di input")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Soglia di confidenza")
-    parser.add_argument("--output", default=None, help="Percorso per salvare i risultati")
-    parser.add_argument("--model", default=None, help="Percorso del modello da utilizzare")
     args = parser.parse_args()
     
-    inference(
-        image_path=args.image,
-        threshold=args.threshold,
-        output_path=args.output,
-        model_path=args.model
-    )
+    # Verifica esistenza della directory di input
+    if not os.path.exists(args.input_dir):
+        print(f"ERRORE: Directory di input non trovata: {args.input_dir}")
+        return
+    
+    # Verifica esistenza del file del modello
+    if not os.path.exists(args.model):
+        print(f"ERRORE: File del modello non trovato: {args.model}")
+        return
+    
+    # Inizializza il modello
+    print(f"Inizializzazione modello da {args.model}...")
+    model = MaskRCNNModel(num_classes=NUM_CLASSES)
+    
+    # Carica il modello
+    if not model.load(args.model):
+        print(f"ERRORE: Impossibile caricare il modello da {args.model}")
+        return
+    
+    # Prepara la directory di output
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Trova tutte le cartelle dei clip
+    clip_folders = [d for d in glob.glob(os.path.join(args.input_dir, "clip-*")) if os.path.isdir(d)]
+    
+    if not clip_folders:
+        print(f"Nessuna cartella clip trovata in {args.input_dir}")
+        return
+    
+    # Limita il numero di clip se necessario
+    if args.num_clips < len(clip_folders):
+        clip_folders = clip_folders[:args.num_clips]
+    
+    print(f"Processando {len(clip_folders)} clip, {args.frames_per_clip} frame casuali per clip")
+    
+    # Elabora ogni clip
+    all_results = {}
+    
+    for clip_folder in tqdm(clip_folders, desc="Elaborazione clip"):
+        clip_results = process_hot3d_clip(
+            model, 
+            clip_folder, 
+            args.output_dir, 
+            args.class_names.split(','), 
+            args.frames_per_clip, 
+            args.camera_id, 
+            args.threshold
+        )
+        all_results.update(clip_results)
+    
+    # Salva tutti i risultati in un file JSON
+    results_json_path = os.path.join(args.output_dir, "all_predictions.json")
+    with open(results_json_path, 'w') as f:
+        json.dump(all_results, f, indent=2)
+    
+    print(f"\nProcessamento completato. Risultati salvati in {args.output_dir}")
+    print(f"Riassunto salvato in {results_json_path}")
+    print(f"Totale immagini elaborate: {len(all_results)}")
+    
+    # Conta le predizioni
+    total_predictions = sum(result["num_predictions"] for result in all_results.values())
+    print(f"Totale predizioni: {total_predictions}")
+    
+    # Calcola la media di predizioni per immagine
+    if len(all_results) > 0:
+        avg_predictions = total_predictions / len(all_results)
+        print(f"Media predizioni per immagine: {avg_predictions:.2f}")
+
+if __name__ == "__main__":
+    main()

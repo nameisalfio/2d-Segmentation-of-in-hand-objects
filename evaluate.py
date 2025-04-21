@@ -1,259 +1,265 @@
 import os
 import sys
-import json
+import argparse
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
+import json
 from tqdm import tqdm
+from datetime import datetime
 
-from config import RESULTS_DIR, VISUALIZATIONS_DIR, MODEL_SAVE_PATH, BATCH_SIZE, NUM_CLASSES
-from data.preprocessing import prepare_datasets
-from data.utils import collate_fn
-from models.mask_rcnn import MaskRCNNModel
-from utils.visualization import visualize_prediction
+# Aggiungi la directory principale al path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def evaluate_model_on_test(model, test_loader, visualize=True, num_vis_samples=20):
+from models import MaskRCNNModel
+from data.dataset import create_data_loaders
+from config import MODEL_SAVE_PATH, BATCH_SIZE, NUM_CLASSES, RESULTS_DIR
+
+def calculate_metrics(predictions, targets, iou_threshold=0.5):
     """
-    Valuta il modello sul set di test con metriche dettagliate
+    Calcola le metriche di valutazione per maschere
     
     Args:
-        model: Modello addestrato
-        test_loader: DataLoader con i dati di test
-        visualize: Se visualizzare le predizioni
-        num_vis_samples: Numero di campioni da visualizzare
+        predictions: Lista di dizionari di predizioni
+        targets: Lista di dizionari di ground truth
+        iou_threshold: Soglia IoU per considerare un match
     
     Returns:
-        Dizionario con metriche dettagliate
+        Dizionario con metriche
     """
-    print("Valutazione del modello sul set di test...")
+    # Inizializza contatori
+    tp = 0  # True positive
+    fp = 0  # False positive
+    fn = 0  # False negative
     
-    # Valuta il modello
-    model.model.eval()
+    total_iou = 0.0
+    total_matches = 0
     
-    # Metriche
-    all_ious = []
-    empty_masks = 0
-    correct_detections = 0
-    total_gt_objects = 0
-    total_pred_objects = 0
-    
-    # Per la visualizzazione
-    vis_samples = []
-    
-    with torch.no_grad():
-        for batch_idx, (images, targets) in enumerate(tqdm(test_loader, desc="Valutazione")):
-            # Sposta le immagini sul dispositivo
-            images = [image.to(model.device) for image in images]
+    # Calcola TP, FP, FN
+    for pred, target in zip(predictions, targets):
+        pred_masks = pred['masks']  # (N, H, W)
+        gt_masks = target['masks'].numpy()  # (M, H, W)
+        
+        # Calcola la matrice di IoU tra tutte le maschere
+        if len(pred_masks) > 0 and len(gt_masks) > 0:
+            ious = np.zeros((len(pred_masks), len(gt_masks)))
+            for i, pred_mask in enumerate(pred_masks):
+                for j, gt_mask in enumerate(gt_masks):
+                    pred_mask_binary = pred_mask > 0.5
+                    gt_mask_binary = gt_mask > 0.5
+                    
+                    # Calcola IoU: (intersection / union)
+                    intersection = np.logical_and(pred_mask_binary, gt_mask_binary).sum()
+                    union = np.logical_or(pred_mask_binary, gt_mask_binary).sum()
+                    ious[i, j] = intersection / union if union > 0 else 0
             
-            # Ottieni le predizioni
-            predictions = model.model(images)
+            # Determina i match usando l'algoritmo greedy
+            matches = []
+            unmatched_preds = list(range(len(pred_masks)))
+            unmatched_gts = list(range(len(gt_masks)))
             
-            # Elabora ogni immagine
-            for i, (pred, target) in enumerate(zip(predictions, targets)):
-                # Sample per visualizzazione
-                if len(vis_samples) < num_vis_samples and np.random.random() < 0.1:
-                    vis_samples.append((images[i], pred, target))
-                
-                # Sposta il target su CPU per la valutazione
-                target = {k: v.cpu() for k, v in target.items()}
-                
-                # Ottieni le maschere predette
-                pred_masks = pred['masks'].cpu()
-                pred_scores = pred['scores'].cpu()
-                
-                # Ottieni le maschere target
-                target_masks = target['masks']
-                
-                # Conta gli oggetti ground truth
-                total_gt_objects += len(target_masks)
-                
-                # Salta le immagini senza maschere target
-                if len(target_masks) == 0:
-                    empty_masks += 1
-                    continue
-                
-                # Converti le maschere target in formato binario (0 o 1)
-                target_masks = target_masks > 0.5
-                
-                # Usa solo le predizioni ad alta confidenza
-                high_conf_indices = pred_scores > 0.5
-                high_conf_count = high_conf_indices.sum().item()
-                total_pred_objects += high_conf_count
-                
-                if high_conf_count == 0:
-                    # Nessuna predizione ad alta confidenza
-                    continue
-                
-                pred_masks = pred_masks[high_conf_indices]
-                
-                # Converti le maschere predette in formato binario
-                pred_masks = pred_masks > 0.5
-                
-                # Calcola IoU per ogni coppia di maschera predetta e target
-                for pred_mask in pred_masks:
-                    pred_mask = pred_mask.squeeze()
-                    pred_mask_area = pred_mask.sum().item()
+            # Ordina tutte le coppie per IoU decrescente
+            all_iou_pairs = []
+            for i in range(len(pred_masks)):
+                for j in range(len(gt_masks)):
+                    all_iou_pairs.append((i, j, ious[i, j]))
+            
+            all_iou_pairs.sort(key=lambda x: x[2], reverse=True)
+            
+            # Trova i match
+            for pred_idx, gt_idx, iou in all_iou_pairs:
+                if pred_idx in unmatched_preds and gt_idx in unmatched_gts and iou >= iou_threshold:
+                    matches.append((pred_idx, gt_idx, iou))
+                    unmatched_preds.remove(pred_idx)
+                    unmatched_gts.remove(gt_idx)
                     
-                    # Se la maschera predetta è vuota, IoU è 0
-                    if pred_mask_area == 0:
-                        all_ious.append(0.0)
-                        continue
-                    
-                    best_iou = 0.0
-                    for target_mask in target_masks:
-                        target_mask = target_mask.squeeze()
-                        target_mask_area = target_mask.sum().item()
-                        
-                        # Se la maschera target è vuota, IoU è 0
-                        if target_mask_area == 0:
-                            continue
-                        
-                        # Calcola intersezione e unione
-                        intersection = (pred_mask & target_mask).sum().item()
-                        union = pred_mask_area + target_mask_area - intersection
-                        
-                        # Calcola IoU
-                        iou = intersection / union if union > 0 else 0.0
-                        best_iou = max(best_iou, iou)
-                    
-                    all_ious.append(best_iou)
-                    
-                    # Conta le predizioni corrette (IoU > 0.5)
-                    if best_iou > 0.5:
-                        correct_detections += 1
+                    # Aggiorna le statistiche
+                    total_iou += iou
+                    total_matches += 1
+            
+            # Aggiorna i contatori
+            tp += len(matches)
+            fp += len(unmatched_preds)
+            fn += len(unmatched_gts)
+        else:
+            # Se non ci sono predizioni ma ci sono ground truth
+            if len(gt_masks) > 0:
+                fn += len(gt_masks)
+            # Se ci sono predizioni ma non ci sono ground truth
+            if len(pred_masks) > 0:
+                fp += len(pred_masks)
     
     # Calcola le metriche
-    avg_iou = np.mean(all_ious) if all_ious else 0.0
-    precision = correct_detections / total_pred_objects if total_pred_objects > 0 else 0.0
-    recall = correct_detections / total_gt_objects if total_gt_objects > 0 else 0.0
-    f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-    
-    # Stampa i risultati
-    print("\nRisultati della valutazione sul test set:")
-    print(f"  mIoU: {avg_iou:.4f}")
-    print(f"  Precision: {precision:.4f}")
-    print(f"  Recall: {recall:.4f}")
-    print(f"  F1 Score: {f1_score:.4f}")
-    print(f"  Totale oggetti GT: {total_gt_objects}")
-    print(f"  Totale predizioni: {total_pred_objects}")
-    print(f"  Predizioni corrette (IoU>0.5): {correct_detections}")
-    print(f"  Immagini senza maschere: {empty_masks}")
-    
-    # Crea l'istogramma degli IoU
-    if all_ious:
-        plt.figure(figsize=(10, 6))
-        plt.hist(all_ious, bins=20, alpha=0.7)
-        plt.title('Distribuzione degli IoU')
-        plt.xlabel('IoU')
-        plt.ylabel('Frequenza')
-        plt.grid(True, alpha=0.3)
-        
-        # Salva l'istogramma
-        hist_path = os.path.join(RESULTS_DIR, "iou_histogram.png")
-        plt.savefig(hist_path)
-        plt.close()
-        print(f"Istogramma IoU salvato in {hist_path}")
-    
-    # Visualizza alcuni esempi
-    if visualize and vis_samples:
-        print(f"\nVisualizzazione di {len(vis_samples)} esempi...")
-        vis_dir = os.path.join(VISUALIZATIONS_DIR, "test_detailed")
-        os.makedirs(vis_dir, exist_ok=True)
-        
-        for idx, (image, pred, target) in enumerate(vis_samples):
-            # Converti l'immagine in numpy
-            img_tensor = image.cpu()
-            img_np = img_tensor.permute(1, 2, 0).numpy()
-            if img_np.max() <= 1.0:
-                img_np = (img_np * 255).astype(np.uint8)
-            
-            # Ottieni maschere e scores
-            pred_masks = pred['masks'].cpu()
-            pred_scores = pred['scores'].cpu()
-            
-            # Usa solo predizioni ad alta confidenza
-            high_conf_idx = pred_scores > 0.5
-            pred_masks = pred_masks[high_conf_idx]
-            pred_scores = pred_scores[high_conf_idx]
-            
-            # Converti target masks
-            target_masks = target['masks'].cpu()
-            
-            # Crea figura con 3 subplot
-            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-            
-            # Immagine originale
-            axes[0].imshow(img_np)
-            axes[0].set_title("Immagine originale")
-            axes[0].axis('off')
-            
-            # Ground truth
-            gt_vis = visualize_prediction(img_np, target_masks)
-            axes[1].imshow(gt_vis)
-            axes[1].set_title(f"Ground Truth ({len(target_masks)} oggetti)")
-            axes[1].axis('off')
-            
-            # Predizioni
-            pred_vis = visualize_prediction(img_np, pred_masks)
-            axes[2].imshow(pred_vis)
-            axes[2].set_title(f"Predizioni ({len(pred_masks)} oggetti)")
-            axes[2].axis('off')
-            
-            # Aggiungi testo con scores
-            if len(pred_scores) > 0:
-                score_text = f"Scores: {', '.join([f'{s:.2f}' for s in pred_scores])}"
-                plt.figtext(0.5, 0.01, score_text, ha="center", fontsize=10, 
-                           bbox={"facecolor":"white", "alpha":0.8, "pad":5})
-            
-            # Salva
-            plt.tight_layout()
-            plt.savefig(os.path.join(vis_dir, f"test_detailed_{idx}.png"))
-            plt.close()
+    precision = tp / (tp + fp) if tp + fp > 0 else 0
+    recall = tp / (tp + fn) if tp + fn > 0 else 0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
+    mean_iou = total_iou / total_matches if total_matches > 0 else 0
     
     return {
-        "mIoU": avg_iou,
         "precision": precision,
         "recall": recall,
-        "f1_score": f1_score,
-        "correct_detections": correct_detections,
-        "total_gt_objects": total_gt_objects,
-        "total_pred_objects": total_pred_objects,
-        "empty_masks": empty_masks,
-        "iou_distribution": all_ious if len(all_ious) < 1000 else []  # Limita la dimensione per il JSON
+        "f1_score": f1,
+        "mean_iou": mean_iou,
+        "true_positives": tp,
+        "false_positives": fp,
+        "false_negatives": fn
     }
 
-def main():
-    # Prepara i dataset
-    _, _, test_dataset = prepare_datasets()
-
-    # Crea il data loader per il test
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=6
-    )
+def evaluate_model(args):
+    """
+    Funzione principale per la valutazione del modello
+    
+    Args:
+        args: Argomenti da riga di comando
+    """
+    print("=" * 50)
+    print("VALUTAZIONE MASK R-CNN PER HOT3D DATASET")
+    print("=" * 50)
+    
+    # Verifica disponibilità della GPU
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Dispositivo: {device}")
     
     # Inizializza il modello
-    print("Inizializzazione del modello Mask R-CNN...")
-    mask_rcnn = MaskRCNNModel(num_classes=NUM_CLASSES, pretrained=True)
+    print("\nInizializzazione modello...")
+    model = MaskRCNNModel(
+        num_classes=args.num_classes,
+        pretrained=False,  # Non è necessario pretrained per l'eval
+        backbone_name=args.backbone
+    )
     
-    # Carica il modello addestrato
-    if not os.path.exists(MODEL_SAVE_PATH):
-        print(f"Errore: Modello addestrato non trovato in {MODEL_SAVE_PATH}")
+    # Carica il modello
+    if not model.load(args.model):
+        print(f"ERRORE: Impossibile caricare il modello da {args.model}")
         return
     
-    mask_rcnn.load(MODEL_SAVE_PATH)
+    # Crea il dataloader per il test
+    print("\nCreazione dataloader...")
+    try:
+        if args.dataset_type == 'train':
+            train_loader, _, _ = create_data_loaders(batch_size=1)  # batch_size=1 per l'eval
+            eval_loader = train_loader
+        elif args.dataset_type == 'val':
+            _, eval_loader, _ = create_data_loaders(batch_size=1)
+        else:  # test
+            _, _, eval_loader = create_data_loaders(batch_size=1)
+        
+        print(f"Dataloader creato con {len(eval_loader)} batch")
+    except Exception as e:
+        print(f"ERRORE nella creazione del dataloader: {str(e)}")
+        return
     
-    # Assicurati che la directory dei risultati esista
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    # Avvia valutazione
+    print("\nAvvio valutazione...")
+    start_time = datetime.now()
     
-    # Valuta il modello sul set di test
-    test_metrics = evaluate_model_on_test(mask_rcnn, test_loader, visualize=True, num_vis_samples=30)
+    # Imposta il modello in modalità valutazione
+    model.model.eval()
     
-    print("Valutazione completata!")
+    all_preds = []
+    all_targets = []
+    
+    # Disabilita il calcolo dei gradienti
+    with torch.no_grad():
+        for images, targets in tqdm(eval_loader, desc="Valutazione"):
+            # Sposta i dati sul device
+            images = [image.to(model.device) for image in images]
+            
+            # Per calcolare le metriche, mantieni i target sulla CPU
+            target_cpu = targets
+            
+            # Forward pass per le predizioni
+            outputs = model.model(images)
+            
+            # Converti le predizioni in un formato utilizzabile
+            for output, target in zip(outputs, target_cpu):
+                # Estrai le predizioni
+                pred = {
+                    'boxes': output['boxes'].cpu(),
+                    'scores': output['scores'].cpu(),
+                    'labels': output['labels'].cpu(),
+                    'masks': output['masks'].cpu()  # Mantieni la dimensione del canale
+                }
+                
+                # Applica la soglia di confidenza
+                keep = pred['scores'] > args.threshold
+                pred['boxes'] = pred['boxes'][keep]
+                pred['scores'] = pred['scores'][keep]
+                pred['labels'] = pred['labels'][keep]
+                pred['masks'] = pred['masks'][keep]
+                
+                # Aggiungi alle liste
+                all_preds.append(pred)
+                all_targets.append(target)
+    
+    # Calcola mIoU utilizzando la funzione della classe model
+    miou = model.calculate_miou(all_preds, all_targets, mask_binarize_threshold=0.5)
+    
+    # Calcola anche le altre metriche
+    metrics = calculate_metrics(all_preds, all_targets, iou_threshold=args.iou_threshold)
+    
+    # Aggiungi mIoU alle metriche
+    metrics['miou'] = miou
+    
+    # Stampa le metriche
+    print("\nMetriche di valutazione:")
+    print(f"Precision: {metrics['precision']:.4f}")
+    print(f"Recall: {metrics['recall']:.4f}")
+    print(f"F1-Score: {metrics['f1_score']:.4f}")
+    print(f"Mean IoU: {metrics['mean_iou']:.4f}")
+    print(f"mIoU: {metrics['miou']:.4f}")
+    print(f"True Positives: {metrics['true_positives']}")
+    print(f"False Positives: {metrics['false_positives']}")
+    print(f"False Negatives: {metrics['false_negatives']}")
+    
+    # Salva i risultati
+    results_file = os.path.join(
+        RESULTS_DIR, 
+        f"eval_{args.dataset_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
+    
+    os.makedirs(os.path.dirname(results_file), exist_ok=True)
+    
+    # Aggiungi informazioni aggiuntive
+    results = {
+        "model_path": args.model,
+        "dataset_type": args.dataset_type,
+        "threshold": args.threshold,
+        "iou_threshold": args.iou_threshold,
+        "metrics": metrics,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    with open(results_file, 'w') as f:
+        json.dump(results, f, indent=4)
+    
+    # Stampa tempo di valutazione
+    end_time = datetime.now()
+    duration = end_time - start_time
+    print(f"\nValutazione completata in {duration}")
+    print(f"Risultati salvati in: {results_file}")
+
+def main():
+    parser = argparse.ArgumentParser(description='Valutazione Mask R-CNN per HOT3D dataset')
+    
+    parser.add_argument('--model', type=str, required=True,
+                        help='Percorso al modello da valutare')
+    parser.add_argument('--dataset_type', type=str, default='test',
+                        choices=['train', 'val', 'test'],
+                        help='Tipo di dataset da utilizzare per la valutazione')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                        help='Soglia di confidenza per le predizioni')
+    parser.add_argument('--iou_threshold', type=float, default=0.5,
+                        help='Soglia IoU per considerare un match')
+    parser.add_argument('--num_classes', type=int, default=NUM_CLASSES,
+                        help='Numero di classi (incluso background)')
+    parser.add_argument('--backbone', type=str, default="resnext101_32x8d",
+                        choices=["resnext101_32x8d", "resnet50"],
+                        help='Tipo di backbone utilizzato nel modello')
+    
+    args = parser.parse_args()
+    evaluate_model(args)
 
 if __name__ == "__main__":
     main()
+
+

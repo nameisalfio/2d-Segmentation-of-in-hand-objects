@@ -98,3 +98,30 @@ Ogni file contiene una lista di dizionari con la seguente struttura:
 I dataloader PyTorch restituiscono coppie `(image, mask)` dove:
 - `image`: Tensore PyTorch dell'immagine normalizzata (3, H, W)
 - `mask`: Tensore PyTorch della maschera binaria (H, W)
+
+## Main
+
+### Preprocessing
+```bash
+python main.py preprocess --dataset_type train --max_frames 10
+```
+
+### Addestramento
+```bash
+python main.py train --batch_size 2 --epochs 20
+```
+
+### Valutazione
+```bash
+python main.py evaluate --model saved_models/mask_rcnn_final.pth --dataset_type val
+```
+
+### Inferenza
+```bash
+python main.py inference --model saved_models/mask_rcnn_final.pth 
+```
+
+### Visualizzazione di campioni
+```bash
+python main.py visualize --dataset train --num_samples 10
+```

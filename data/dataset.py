@@ -1,11 +1,11 @@
 import os
-import json
 import numpy as np
 import cv2
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset
 import torchvision.transforms.functional as F
 import sys
+import random
 import argparse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,30 +13,37 @@ from config import *
 from data.preprocessing import process_dataset
 from data.utils import clean_directory
 
-class ObjectsInHandDataset(Dataset):
-    """Dataset PyTorch per la segmentazione degli oggetti in mano."""
-    
-    def __init__(self, data_path, transform=None):
-        """
-        Inizializza il dataset.
-        
-        Args:
-            data_path: Percorso al file .npy contenente i dati
-            transform: Trasformazioni da applicare
-        """
+class ObjectsInHandDataset(torch.utils.data.Dataset):
+    def __init__(self, cache_file, transform=None):
         self.transform = transform
-        self.samples = []
+        self.samples = np.load(cache_file, allow_pickle=True)
+        print(f"Caricati {len(self.samples)} campioni dal file {cache_file}")
         
-        # Carica i dati
-        if os.path.exists(data_path):
-            try:
-                data = np.load(data_path, allow_pickle=True)
-                print(f"Caricati {len(data)} campioni dal file {data_path}")
-                self.samples = data
-            except Exception as e:
-                print(f"Errore nel caricare {data_path}: {str(e)}")
-        else:
-            print(f"File {data_path} non trovato!")
+        valid_samples = []
+        invalid_count = 0
+        for i, sample in enumerate(self.samples):
+            if self._is_valid_sample(sample):
+                valid_samples.append(sample)
+            else:
+                invalid_count += 1
+        
+        if invalid_count > 0:
+            print(f"Rimossi {invalid_count} campioni non validi")
+            self.samples = np.array(valid_samples, dtype=object)
+    
+    def _is_valid_sample(self, sample):
+        if "image_path" not in sample or not os.path.exists(sample["image_path"]):
+            return False
+        
+        if "boxes" in sample and len(sample["boxes"]) > 0:
+            if any(len(box) != 4 for box in sample["boxes"]):
+                return False
+            
+            for box in sample["boxes"]:
+                if box[2] <= box[0] or box[3] <= box[1]:
+                    return False
+        
+        return True
     
     def __len__(self):
         return len(self.samples)
@@ -44,175 +51,173 @@ class ObjectsInHandDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.samples[idx]
         
-        # Carica l'immagine
         image_path = sample["image_path"]
-        try:
-            image = cv2.imread(image_path)
-            if image is None:
-                raise ValueError(f"Impossibile leggere l'immagine: {image_path}")
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        except Exception as e:
-            print(f"Errore nel caricare l'immagine {image_path}: {str(e)}")
-            # Fallback: immagine vuota
-            height, width = sample["image_shape"]
-            image = np.zeros((height, width, 3), dtype=np.uint8)
+        image = cv2.imread(image_path)
+        if image is None:
+            raise RuntimeError(f"Impossibile leggere l'immagine: {image_path}")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # Ottieni la maschera
-        mask = sample["mask"]
+        mask = sample.get("mask", np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
         
-        # Assicurati che la maschera abbia le dimensioni corrette
         if mask.shape[:2] != image.shape[:2]:
             mask = cv2.resize(mask, (image.shape[1], image.shape[0]), 
                              interpolation=cv2.INTER_NEAREST)
         
-        # Converti l'immagine e la maschera in tensori
         image = F.to_tensor(image)
-        mask = torch.as_tensor(mask, dtype=torch.long)  # usa long per maschere di classe
+        mask = torch.as_tensor(mask, dtype=torch.uint8)
         
-        # Applica trasformazioni se necessario
+        boxes = sample.get("boxes", [])
+        boxes = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4), dtype=torch.float32)
+        
+        labels = sample.get("labels", [])
+        labels = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
+        
+        if "individual_masks" in sample and sample["individual_masks"]:
+            individual_masks = []
+            for m in sample["individual_masks"]:
+                if m.shape[:2] != image.shape[1:]:
+                    m = cv2.resize(m, (image.shape[2], image.shape[1]), 
+                                  interpolation=cv2.INTER_NEAREST)
+                individual_masks.append(torch.as_tensor(m, dtype=torch.uint8))
+            masks = torch.stack(individual_masks) if individual_masks else torch.zeros((0, image.shape[1], image.shape[2]), dtype=torch.uint8)
+        else:
+            masks = mask.unsqueeze(0)
+        
+        target = {
+            "boxes": boxes,
+            "labels": labels,
+            "masks": masks,
+            "image_id": torch.tensor([idx], dtype=torch.int64)
+        }
+        
         if self.transform:
-            image, mask = self.transform(image, mask)
+            image, target = self.transform(image, target)
         
-        return image, mask  # Ritorna solo l'immagine e la maschera
+        return image, target
 
 class Compose:
     def __init__(self, transforms):
         self.transforms = transforms
     
-    def __call__(self, image, mask):
+    def __call__(self, image, target):
         for t in self.transforms:
-            image, mask = t(image, mask)
-        return image, mask
+            image, target = t(image, target)
+        return image, target
 
 class RandomHorizontalFlip:
     def __init__(self, prob):
         self.prob = prob
     
-    def __call__(self, image, mask):
+    def __call__(self, image, target):
         if torch.rand(1) < self.prob:
             image = image.flip(-1)
-            mask = mask.flip(-1)
-        return image, mask
+            if "masks" in target:
+                target["masks"] = target["masks"].flip(-1)
+            if "boxes" in target and len(target["boxes"]) > 0:
+                boxes = target["boxes"].clone()
+                boxes[:, [0, 2]] = image.shape[-1] - boxes[:, [2, 0]]
+                target["boxes"] = boxes
+        return image, target
 
 class Normalize:
     def __init__(self, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
         self.mean = mean
         self.std = std
     
-    def __call__(self, image, mask):
+    def __call__(self, image, target):
         image = F.normalize(image, mean=self.mean, std=self.std)
-        return image, mask
+        return image, target
 
 def get_transform(train):
-    """
-    Ottiene le trasformazioni appropriate per l'addestramento o la validazione.
-    
-    Args:
-        train: Se True, include trasformazioni di data augmentation
-        
-    Returns:
-        Funzione di trasformazione
-    """
     transforms = []
     
-    # Aggiungi data augmentation solo per il training
     if train:
         transforms.append(RandomHorizontalFlip(0.5))
     
-    # Normalizzazione
     transforms.append(Normalize())
     
     return Compose(transforms)
-
-def collate_fn(batch):
-    """
-    Funzione collate personalizzata per gestire batch con oggetti variabili.
     
-    Args:
-        batch: Batch di dati da collate
-        
-    Returns:
-        Tuple di (images, masks)
-    """
+def collate_fn(batch):
     return tuple(zip(*batch))
 
 def create_data_loaders(batch_size=BATCH_SIZE):
     """
-    Crea i data loader per training, validation e test.
+    Crea data loader per training, validation e test.
     
     Args:
         batch_size: Dimensione del batch
         
     Returns:
-        Tuple di (train_loader, val_loader, test_loader)
+        train_loader, val_loader, test_loader: Data loader per training, validation e test
     """
-    # Verifica che i file di cache esistano
     if not os.path.exists(TRAIN_CACHE_PATH):
         raise FileNotFoundError(f"File {TRAIN_CACHE_PATH} non trovato. Esegui prima preprocessing.py")
-    
-    # Crea i dataset direttamente dai file salvati
+
+    def worker_init_fn(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
     train_dataset = ObjectsInHandDataset(TRAIN_CACHE_PATH, transform=get_transform(train=True))
     
-    # Usa il file di validazione se esiste, altrimenti crea un subset
     if os.path.exists(VAL_CACHE_PATH):
         val_dataset = ObjectsInHandDataset(VAL_CACHE_PATH, transform=get_transform(train=False))
-        print(f"Caricato file di validazione: {VAL_CACHE_PATH}")
     else:
-        # Dividi il dataset in train e validation
         train_size = int(0.8 * len(train_dataset))
+        val_size = len(train_dataset) - train_size
         
-        indices = list(range(len(train_dataset)))
-        np.random.seed(RANDOM_SEED)
-        np.random.shuffle(indices)
+        indices = torch.randperm(len(train_dataset)).tolist()
+        train_dataset = Subset(train_dataset, indices[:train_size])
+        val_dataset = Subset(train_dataset, indices[train_size:])
         
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:]
-        
-        # Crea subset
-        train_dataset = Subset(train_dataset, train_indices)
-        val_dataset = Subset(ObjectsInHandDataset(TRAIN_CACHE_PATH, 
-                                              transform=get_transform(train=False)), val_indices)
-        print("Creati subset per training e validation dal dataset principale")
-    
-    # Crea test dataset se esiste
+        print(f"Creati subset per training ({train_size} campioni) e validation ({val_size} campioni)")
+
     if os.path.exists(TEST_CACHE_PATH):
         test_dataset = ObjectsInHandDataset(TEST_CACHE_PATH, transform=get_transform(train=False))
         print(f"Caricato file di test: {TEST_CACHE_PATH}")
     else:
-        test_dataset = val_dataset  # Usa validation come test se test non esiste
-        print("File di test non trovato, utilizzo validation come test")
-        
-    # Crea data loader
+        test_dataset = []
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=4
+        num_workers=8,
+        persistent_workers=True,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_fn,
-        num_workers=4
+        num_workers=8,
+        persistent_workers=True,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn
     )
-    
+
     test_loader = DataLoader(
         test_dataset,
-        batch_size=1,  # Per il test è meglio usare batch_size=1
+        batch_size=1,
         shuffle=False,
         collate_fn=collate_fn,
-        num_workers=4
+        num_workers=8,
+        persistent_workers=True,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn
     )
-    
+
     print(f"Creati data loader: {len(train_dataset)} campioni per training, "
           f"{len(val_dataset)} per validation, {len(test_dataset)} per test")
     
     return train_loader, val_loader, test_loader
 
-def build_dataset_files(train=True, test=True, max_clips='all', debug=False):
+def build_dataset_files(train=True, test=True, max_clips='all', debug=False, max_frames_per_clip=None):
     """
     Crea i file di dataset (train, val e test) se non esistono già.
     
@@ -221,17 +226,18 @@ def build_dataset_files(train=True, test=True, max_clips='all', debug=False):
         test: Se True, processa il dataset di test
         max_clips: Numero massimo di clip da processare o 'all' per tutti
         debug: Se True, salva immagini di debug
+        max_frames_per_clip: Numero massimo di frame da selezionare per ogni clip
     """
     if train and (not os.path.exists(TRAIN_CACHE_PATH) or not os.path.exists(VAL_CACHE_PATH)):
         print("Creazione dataset di training...")
-        process_dataset('train', max_clips, USE_CAMERAS, debug)
+        process_dataset('train', max_clips, USE_CAMERAS, debug, max_frames_per_clip)
     
     if test and not os.path.exists(TEST_CACHE_PATH):
         print("Creazione dataset di test...")
-        process_dataset('test', max_clips, USE_CAMERAS, debug)
+        process_dataset('test', max_clips, USE_CAMERAS, debug, max_frames_per_clip)
     
-    print("Dataset pronti per l'uso.")
-
+    print("Dataset pronti per l'uso.") 
+    
 def main():
     parser = argparse.ArgumentParser(description='Preprocessing e creazione dataloader HOT3D')
     parser.add_argument('--action', choices=['preprocess', 'dataloader', 'all', 'clean'], default='all',
@@ -240,13 +246,14 @@ def main():
                         help='Tipo di dataset da processare: train, test o both')
     parser.add_argument('--max_clips', default='all', 
                         help='Numero massimo di clip da processare (o "all" per tutti)')
+    parser.add_argument('--max_frames', type=int, default=None,
+                        help='Numero massimo di frame da selezionare randomicamente per ogni clip')
     parser.add_argument('--debug', action='store_true', help='Salva immagini di debug')
     parser.add_argument('--cameras', nargs='+', default=USE_CAMERAS, help='ID telecamere da processare')
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help='Dimensione del batch')
     
     args = parser.parse_args()
     
-    # Pulisci la directory di dataset_cache
     if args.action == 'clean':
         if os.path.exists(DATASET_CACHE_DIR):
             print(f"Pulizia directory: {DATASET_CACHE_DIR}")
@@ -254,13 +261,11 @@ def main():
             print("Directory pulita.")
         return
     
-    # Esegui il preprocessing
     if args.action in ['preprocess', 'all']:
         process_train = args.dataset_type in ['train', 'both']
         process_test = args.dataset_type in ['test', 'both']
-        build_dataset_files(process_train, process_test, args.max_clips, args.debug)
+        build_dataset_files(process_train, process_test, args.max_clips, args.debug, args.max_frames)
     
-    # Crea i dataset/dataloader
     if args.action in ['dataloader', 'all']:
         train_loader, val_loader, test_loader = create_data_loaders(batch_size=args.batch_size)
         print("Dataset e dataloader creati con successo.")

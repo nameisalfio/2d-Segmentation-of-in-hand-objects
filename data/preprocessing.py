@@ -5,248 +5,242 @@ import cv2
 import glob
 from tqdm import tqdm
 import sys
-from pycocotools import mask as mask_utils # type: ignore
+from pycocotools import mask as mask_utils 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import *
-from data.utils import save_debug_image
+from config import * 
+
 
 def process_frame(image_info, annotations, categories, dataset_path, debug_dir=None):
     """
-    Processa un singolo frame dal dataset VISOR, estraendo oggetti in mano.
+    Processes a single frame from the VISOR dataset, extracting in-hand objects.
     """
     image_id = image_info["id"]
     image_path = os.path.join(dataset_path, "images", image_info["file_name"])
     
-    # Verifica che l'immagine esista
     if not os.path.exists(image_path):
-        print(f"Immagine non trovata: {image_path}")
+        print(f"Image not found: {image_path}")
         return None
     
-    # Carica l'immagine
     image = cv2.imread(image_path)
     if image is None:
-        print(f"Impossibile leggere l'immagine: {image_path}")
+        print(f"Could not read image: {image_path}")
         return None
     
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # Convert to RGB
     height, width = image.shape[:2]
     
-    # Filtra le annotazioni per questa immagine
+    # Filter annotations for this specific image
     image_annotations = [ann for ann in annotations if ann["image_id"] == image_id]
     
-    # Ottieni le categorie
+    # Get category IDs for "hand" and other objects
     hand_category_id = None
-    object_category_id = None
+    object_category_id = None # Assuming only one other object category for "object_in_hand"
     for cat in categories:
-        if "hand" in cat["name"].lower():
+        if "hand" in cat["name"].lower(): # Case-insensitive check for "hand"
             hand_category_id = cat["id"]
-        else:
+        else: # Assuming the other category is the object of interest
             object_category_id = cat["id"]
     
-    # Filtra solo le annotazioni delle mani in contatto con oggetti
+    # Filter for hand annotations that are in contact with an object
     hands_in_contact = [ann for ann in image_annotations if 
                       ann["category_id"] == hand_category_id and 
-                      ann.get("isincontact", 0) == 1]
+                      ann.get("isincontact", 0) == 1] # isincontact=1 means hand is touching an object
     
-    # Filtra solo le annotazioni degli oggetti
+    # Filter for object annotations
     objects = [ann for ann in image_annotations if ann["category_id"] == object_category_id]
     
     if not hands_in_contact or not objects:
-        return None  # Nessuna mano in contatto con oggetti o nessun oggetto in questo frame
+        return None  # No hands in contact with objects, or no objects found in this frame
     
-    # Associamo le mani agli oggetti basandoci sulla sovrapposizione spaziale
+    # Associate hands with objects based on spatial overlap (bounding box intersection)
     objects_in_hand = []
     for hand in hands_in_contact:
-        hand_box = hand["bbox"]
-        hand_x1, hand_y1, hand_w, hand_h = hand_box
+        hand_box_coco = hand["bbox"] # [x, y, width, height]
+        hand_x1, hand_y1, hand_w, hand_h = hand_box_coco
         hand_x2, hand_y2 = hand_x1 + hand_w, hand_y1 + hand_h
         
         for obj in objects:
-            obj_box = obj["bbox"]
-            obj_x1, obj_y1, obj_w, obj_h = obj_box
+            obj_box_coco = obj["bbox"] # [x, y, width, height]
+            obj_x1, obj_y1, obj_w, obj_h = obj_box_coco
             obj_x2, obj_y2 = obj_x1 + obj_w, obj_y1 + obj_h
             
-            # Verifica sovrapposizione
+            # Check for bounding box overlap
             if (max(hand_x1, obj_x1) < min(hand_x2, obj_x2) and 
                 max(hand_y1, obj_y1) < min(hand_y2, obj_y2)):
-                # C'è sovrapposizione, aggiungiamo questo oggetto alla lista
-                if obj not in objects_in_hand:
+                # Overlap detected, consider this object as potentially in hand
+                if obj not in objects_in_hand: # Add only if not already added
                     objects_in_hand.append(obj)
     
     if not objects_in_hand:
-        return None  # Nessun oggetto in mano in questo frame
+        return None  # No objects determined to be in hand in this frame after association
     
-    # Crea una maschera combinata di tutti gli oggetti in mano
+    # Create a combined mask of all objects in hand
     combined_mask = np.zeros((height, width), dtype=np.uint8)
     
-    # Liste per raccogliere maschere e box individuali
-    individual_masks = []
-    individual_boxes = []
-    individual_labels = []
-    individual_object_ids = []
+    # Lists to collect individual masks, boxes, labels, and object IDs
+    individual_masks_list = []
+    individual_boxes_list = []
+    individual_labels_list = []
+    individual_object_ids_list = []
     
-    for obj in objects_in_hand:
-        # Estrai la maschera di segmentazione
-        segmentation = obj.get("segmentation", [])
+    for obj_ann in objects_in_hand:
+        segmentation = obj_ann.get("segmentation", [])
         
         if not segmentation:
-            continue
+            continue # Skip if no segmentation data
             
-        # La segmentazione può essere in formato RLE o poligono
-        mask = None
-        if isinstance(segmentation, dict):  # RLE
-            mask = mask_utils.decode(segmentation)
-        elif isinstance(segmentation, list) and len(segmentation) > 0:  # Poligono
-            mask = np.zeros((height, width), dtype=np.uint8)
-            if isinstance(segmentation[0], list):  # Lista di poligoni
+        # Segmentation can be in RLE format or polygon format
+        current_obj_mask = None
+        if isinstance(segmentation, dict):  # RLE format
+            current_obj_mask = mask_utils.decode(segmentation)
+        elif isinstance(segmentation, list) and len(segmentation) > 0:  # Polygon format
+            current_obj_mask = np.zeros((height, width), dtype=np.uint8)
+            if isinstance(segmentation[0], list):  # List of polygons (for objects with holes)
                 for poly_points in segmentation:
                     poly = np.array(poly_points, np.int32).reshape((-1, 2))
-                    cv2.fillPoly(mask, [poly], 1)
-            elif isinstance(segmentation[0], (int, float)):  # Un solo poligono appiattito
+                    cv2.fillPoly(current_obj_mask, [poly], 1)
+            elif isinstance(segmentation[0], (int, float)):  # Single flat polygon list
                 poly = np.array(segmentation, np.int32).reshape((-1, 2))
-                cv2.fillPoly(mask, [poly], 1)
+                cv2.fillPoly(current_obj_mask, [poly], 1)
         
-        if mask is None:
+        if current_obj_mask is None or current_obj_mask.sum() == 0: # Skip if mask is invalid or empty
             continue
             
-        # Estrai il bounding box [x, y, width, height]
-        box = obj["bbox"]
+        coco_box = obj_ann["bbox"] # COCO format: [x, y, width, height]
+        x1, y1, w_box, h_box = coco_box
+        # Convert to [x1, y1, x2, y2] format for easier use with some libraries
+        box_xyxy = [float(x1), float(y1), float(x1 + w_box), float(y1 + h_box)]
         
-        # Converti in formato [x1, y1, x2, y2]
-        x1, y1, w, h = box
-        box_xyxy = [float(x1), float(y1), float(x1 + w), float(y1 + h)]
+        category_id = obj_ann["category_id"] # Get the category ID of the object
         
-        # Ottieni la categoria
-        category_id = obj["category_id"]
+        # Add to the combined mask for all in-hand objects
+        combined_mask = np.logical_or(combined_mask, current_obj_mask).astype(np.uint8)
         
-        # Aggiungi alla maschera combinata
-        combined_mask = np.logical_or(combined_mask, mask).astype(np.uint8)
-        
-        # Salva le informazioni individuali
-        individual_masks.append(mask)
-        individual_boxes.append(box_xyxy)
-        individual_labels.append(category_id)
-        individual_object_ids.append(obj["id"])
+        # Store individual object information
+        individual_masks_list.append(current_obj_mask)
+        individual_boxes_list.append(box_xyxy)
+        individual_labels_list.append(category_id) # Store the object's category ID
+        individual_object_ids_list.append(obj_ann["id"]) # Store the unique annotation ID for this object instance
     
-    # Salva immagine di debug se richiesto
-    if debug_dir and len(individual_masks) > 0:
-        # Crea un'immagine che mostri sia i box che le maschere
-        debug_vis_path = os.path.join(debug_dir, f"image_{image_id}_vis.jpg")
-        vis_image = image.copy()
+    # Save debug image if requested and there are valid masks
+    if debug_dir and len(individual_masks_list) > 0:
+        # Create an image showing both boxes and masks for debugging
+        debug_vis_path = os.path.join(debug_dir, f"image_{image_id}_annotated_objects.jpg")
+        vis_image = image.copy() # Work on a copy of the original image
         
-        # Applica maschere colorate semi-trasparenti
-        mask_overlay = np.zeros_like(vis_image)
-        mask_color = (0, 0, 255)
+        mask_color_for_overlay = (0, 0, 255) # Blue for mask overlay
         
-        for i, mask in enumerate(individual_masks):
-            mask_bool = mask > 0
-            mask_overlay[mask_bool] = mask_color
+        for i, ind_mask in enumerate(individual_masks_list):
+            # Apply semi-transparent colored masks
+            mask_overlay_temp = np.zeros_like(vis_image)
+            mask_bool_ind = ind_mask > 0
+            mask_overlay_temp[mask_bool_ind] = mask_color_for_overlay
             
-            # Aggiungi anche il box corrispondente
-            x1, y1, x2, y2 = [int(b) for b in individual_boxes[i]]
-            cv2.rectangle(vis_image, (x1, y1), (x2, y2), mask_color, 2)
+            alpha_debug = 0.4  # Transparency level for individual mask overlay
+            vis_image[mask_bool_ind] = ((1-alpha_debug) * vis_image[mask_bool_ind] + 
+                                      alpha_debug * mask_overlay_temp[mask_bool_ind]).astype(np.uint8)
+
+            # Also add the corresponding bounding box
+            x1_b, y1_b, x2_b, y2_b = [int(b_coord) for b_coord in individual_boxes_list[i]]
+            cv2.rectangle(vis_image, (x1_b, y1_b), (x2_b, y2_b), mask_color_for_overlay, 2)
             
-            # Aggiungi etichetta con ID categoria
-            label = individual_labels[i]
-            cv2.putText(vis_image, f"ID: {label}", (x1, y1 - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, mask_color, 2)
+            # Add label with category ID
+            label_id = individual_labels_list[i]
+            cv2.putText(vis_image, f"Obj CatID: {label_id}", (x1_b, y1_b - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, mask_color_for_overlay, 2)
         
-        # Sovrapponi maschere con trasparenza
-        alpha = 0.4  # Livello di trasparenza
-        mask_bool = combined_mask > 0
-        vis_image[mask_bool] = ((1-alpha) * vis_image[mask_bool] + 
-                              alpha * mask_overlay[mask_bool]).astype(np.uint8)
-        
-        cv2.imwrite(debug_vis_path, cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(debug_vis_path, cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR)) # Save BGR
     
-    # Crea il record del frame
+    # Create the data record for this frame
     frame_data = {
         "image_id": image_id,
         "file_name": image_info["file_name"],
         "image_path": image_path,
-        "mask": combined_mask,
-        "individual_masks": individual_masks,
-        "boxes": individual_boxes,
-        "labels": individual_labels,
-        "object_ids": individual_object_ids,
-        "image_shape": (height, width)
+        "mask": combined_mask, # Combined mask of all in-hand objects
+        "individual_masks": individual_masks_list, # List of masks for each in-hand object
+        "boxes": individual_boxes_list, # List of [x1,y1,x2,y2] boxes for each
+        "labels": individual_labels_list, # List of category_ids for each object
+        "object_ids": individual_object_ids_list, # List of original annotation IDs for each object
+        "image_shape": (height, width) # Original image dimensions
     }
     
     return frame_data
 
-def process_visor_dataset(json_file, dataset_path=HOT3D_DATASET_PATH, dataset_type='train', debug=False):
+def process_visor_dataset(json_file_path, base_dataset_path=HOT3D_DATASET_PATH, output_dataset_type='train', debug_mode=False):
     """
-    Processa il dataset VISOR da un file JSON e genera un file .npy.
+    Processes the VISOR dataset from a JSON annotation file and generates an .npy cache file.
     
     Args:
-        json_file: Percorso al file JSON con le annotazioni
-        dataset_path: Percorso base del dataset
-        dataset_type: Tipo di output ('train', 'val', 'test')
-        debug: Se True, salva immagini di debug
+        json_file_path (str): Path to the JSON annotation file.
+        base_dataset_path (str): Base path of the dataset where images are stored.
+        output_dataset_type (str): Type of dataset being processed ('train', 'val', or 'test'),
+                                   used to determine the output .npy file name.
+        debug_mode (bool): If True, saves debug images.
     
     Returns:
-        Percorso al file dei dati processati
+        str or None: Path to the processed data file (.npy), or None if processing fails or yields no data.
     """
-    print(f"Elaborazione del file JSON: {json_file}")
+    print(f"Processing JSON annotation file: {json_file_path}")
     
-    # Carica il file JSON con le annotazioni
-    with open(json_file, 'r') as f:
-        data = json.load(f)
+    with open(json_file_path, 'r') as f:
+        annotation_data = json.load(f)
     
-    # Estrai le informazioni rilevanti
-    images = data.get("images", [])
-    annotations = data.get("annotations", [])
-    categories = data.get("categories", [])
+    images_data = annotation_data.get("images", [])
+    annotations_data = annotation_data.get("annotations", [])
+    categories_data = annotation_data.get("categories", [])
     
-    print(f"Trovate {len(images)} immagini, {len(annotations)} annotazioni e {len(categories)} categorie")
-    print(f"Categorie disponibili: {[(cat['id'], cat['name']) for cat in categories]}")
+    print(f"Found {len(images_data)} images, {len(annotations_data)} annotations, and {len(categories_data)} categories.")
+    print(f"Available categories: {[(cat['id'], cat['name']) for cat in categories_data]}")
     
-    # Determina il file di output
-    if dataset_type == 'train':
-        output_file = TRAIN_CACHE_PATH
-    elif dataset_type == 'val':
-        output_file = VAL_CACHE_PATH
+    # Determine the output cache file path based on dataset type
+    if output_dataset_type == 'train':
+        output_cache_file = TRAIN_CACHE_PATH
+    elif output_dataset_type == 'val':
+        output_cache_file = VAL_CACHE_PATH
+    else: # 'test'
+        output_cache_file = TEST_CACHE_PATH
+    
+    os.makedirs(os.path.dirname(output_cache_file), exist_ok=True)
+    
+    debug_output_directory = None
+    if debug_mode:
+        debug_output_directory = os.path.join(DEBUG_OUTPUT_DIR, "visor_preprocessing_debug", output_dataset_type)
+        os.makedirs(debug_output_directory, exist_ok=True)
+        print(f"Debug images will be saved to: {debug_output_directory}")
+    
+    processed_frames_list = []
+    
+    for img_info in tqdm(images_data, desc=f"Processing {output_dataset_type} images"):
+        frame_data_dict = process_frame(img_info, annotations_data, categories_data, base_dataset_path, debug_output_directory)
+        if frame_data_dict:
+            processed_frames_list.append(frame_data_dict)
+    
+    if processed_frames_list:
+        np.save(output_cache_file, processed_frames_list)
+        print(f"Saved a total of {len(processed_frames_list)} processed frames to {output_cache_file}")
+        return output_cache_file
     else:
-        output_file = TEST_CACHE_PATH
-    
-    # Assicurati che la directory di output esista
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
-    # Crea directory di debug
-    debug_dir = None
-    if debug:
-        debug_dir = os.path.join(DEBUG_OUTPUT_DIR, "visor_annotations")
-        os.makedirs(debug_dir, exist_ok=True)
-    
-    processed_frames = []
-    
-    # Processa ogni immagine
-    for image_info in tqdm(images, desc="Processando immagini"):
-        frame_data = process_frame(image_info, annotations, categories, dataset_path, debug_dir)
-        if frame_data:
-            processed_frames.append(frame_data)
-    
-    # Salva tutti i dati in un file
-    if processed_frames:
-        np.save(output_file, processed_frames)
-        print(f"Salvati in totale {len(processed_frames)} frame in {output_file}")
-        return output_file
-    
-    return None
+        print(f"No valid frames processed for {output_dataset_type}. Output file {output_cache_file} not created or is empty.")
+        return None
 
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='Preprocessing del dataset VISOR')
-    parser.add_argument('--dataset', choices=['train_25', 'val', 'test'], default='train',
-                      help='Tipo di dataset (train, val o test)')
-    parser.add_argument('--debug', action='store_true', help='Salva immagini di debug')
+    parser = argparse.ArgumentParser(description='VISOR Dataset Preprocessing Script')
+    parser.add_argument('--dataset_type', choices=['train', 'val', 'test'], default='train',
+                      help='Type of dataset to process (train, val, or test), corresponds to .json file name.')
+    parser.add_argument('--debug', action='store_true', help='Save debug images during processing.')
     args = parser.parse_args()
     
-    # Processa il dataset
-    json_file = os.path.join(HOT3D_DATASET_PATH, os.path.join("annotations", f"{args.dataset}.json"))
-    process_visor_dataset(json_file, HOT3D_DATASET_PATH, args.dataset, args.debug)
+    # Construct path to the JSON annotation file
+    json_annotation_file = os.path.join(HOT3D_DATASET_PATH, "annotations", f"{args.dataset_type}.json")
+    
+    if not os.path.exists(json_annotation_file):
+        print(f"Error: Annotation file not found at {json_annotation_file}")
+        return
+
+    process_visor_dataset(json_annotation_file, HOT3D_DATASET_PATH, args.dataset_type, args.debug)
 
 if __name__ == "__main__":
     main()

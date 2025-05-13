@@ -4,7 +4,7 @@ import argparse
 import torch
 from datetime import datetime
 
-# Aggiungi la directory principale al path
+# Add the parent directory to sys.path to allow imports from sibling modules/packages
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from models import MaskRCNNModel
@@ -13,84 +13,82 @@ from config import MODEL_SAVE_PATH, NUM_EPOCHS, LEARNING_RATE, BATCH_SIZE, NUM_C
 
 def run_train(args):
     """
-    Funzione principale per l'addestramento del modello
+    Main function for model training.
     
     Args:
-        args: Argomenti da riga di comando
+        args: Command-line arguments.
     """
     print("=" * 50)
-    print("ADDESTRAMENTO MASK R-CNN")
+    print("MASK R-CNN TRAINING")
     print("=" * 50)
     
-    # Verifica disponibilità della GPU
+    # Check GPU availability
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Dispositivo: {device}")
+    print(f"Device: {device}")
     
     if device.type == 'cuda':
         gpu_properties = torch.cuda.get_device_properties(0)
         print(f"GPU: {gpu_properties.name}")
         
-        # Calcola memoria disponibile in GB
+        # Calculate available GPU memory in GB
         memory_allocated = torch.cuda.memory_allocated(0) / (1024**3)
         total_memory = gpu_properties.total_memory / (1024**3)
         available_memory = total_memory - memory_allocated
-        print(f"Memoria GPU disponibile: {available_memory:.2f} GB")
+        print(f"Available GPU Memory: {available_memory:.2f} GB")
     
-    # Crea i dataloader
-    print("\nCreazione dataloader...")
+    # Create dataloaders
+    print("\nCreating dataloaders...")
     try:
         train_loader, val_loader, _ = create_data_loaders(batch_size=args.batch_size)
-        print(f"Dataloader creati: {len(train_loader)} batch di training, {len(val_loader)} batch di validation")
+        print(f"Dataloaders created: {len(train_loader)} training batches, {len(val_loader)} validation batches")
     except Exception as e:
-        print(f"ERRORE nella creazione dei dataloader: {str(e)}")
+        print(f"ERROR creating dataloaders: {str(e)}")
         return
     
-    # Inizializzazione modello
-    print("\nInizializzazione modello...")
+    # Initialize model
+    print("\nInitializing model...")
     
-    # Gestisci il caso in cui gli attributi non esistano
-    clip_grad_value = 1.0  # Valore predefinito
-    optimizer_type = 'sgd'  # Valore predefinito
+    clip_grad_value = 1.0  
+    optimizer_type = 'sgd'  
     
-    # Verifica quali attributi sono disponibili
     if hasattr(args, 'clip_grad'):
         clip_grad_value = args.clip_grad
-    elif hasattr(args, 'clip_grad_norm'):
+    elif hasattr(args, 'clip_grad_norm'): 
         clip_grad_value = args.clip_grad_norm
         
     if hasattr(args, 'optimizer'):
         optimizer_type = args.optimizer
     
-    # Modifica alla creazione del modello, passando parametri aggiuntivi
+    # Instantiate the model, passing additional parameters
     model = MaskRCNNModel(
         num_classes=args.num_classes,
         pretrained=not args.no_pretrained,
         backbone_name=args.backbone,
-        clip_grad_norm=clip_grad_value,
-        optimizer_type=optimizer_type
+        clip_grad_norm=clip_grad_value, 
+        optimizer_type=optimizer_type   
     )
     
-    # Carica checkpoint se specificato
+    # Load checkpoint if specified
     if args.resume and os.path.exists(args.resume):
-        print(f"Ripresa addestramento da checkpoint: {args.resume}")
-        model.load(args.resume)
+        print(f"Resuming training from checkpoint: {args.resume}")
+        model.load(args.resume) 
     
-    # Crea directory del modello se non esiste
+    # Create model output directory if it doesn't exist
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     
-    # Configurazione addestramento
-    print("\nConfigurazione addestramento:")
+    # Training configuration
+    print("\nTraining Configuration:")
     print(f"- Batch size: {args.batch_size}")
     print(f"- Learning rate: {args.lr}")
-    print(f"- Epoche: {args.epochs}")
+    print(f"- Epochs: {args.epochs}")
     print(f"- Backbone: {args.backbone}")
-    print(f"- Pretrained: {not args.no_pretrained}")
-    print(f"- Output: {args.output}")
-    print(f"- Clip gradiente: {clip_grad_value}")
-    print(f"- Ottimizzatore: {optimizer_type}")
+    print(f"- Pretrained backbone: {not args.no_pretrained}")
+    print(f"- Output model path: {args.output}")
+    print(f"- Gradient clipping norm: {clip_grad_value}")
+    print(f"- Optimizer: {optimizer_type}")
     
-    # Avvia addestramento
-    print("\nAvvio addestramento...")
+    # Start training
+    print("\nStarting training...")
     start_time = datetime.now()
     
     try:
@@ -102,54 +100,55 @@ def run_train(args):
             model_save_path=args.output
         )
         
-        # Stampa tempo di addestramento
+        # Print training time
         end_time = datetime.now()
         duration = end_time - start_time
-        print(f"\nAddestramento completato in {duration}")
-        print(f"Modello salvato in: {args.output}")
+        print(f"\nTraining completed in {duration}")
+        print(f"Model saved to: {args.output}")
         
-        # Stampa metriche finali
-        if history["val_miou"]:
-            best_map = max(history["val_miou"])
-            best_epoch = history["val_miou"].index(best_map) + 1
-            print(f"Miglior mIoU: {best_map:.4f} (Epoca {best_epoch})")
+        if history and "val_miou" in history and history["val_miou"]: 
+            best_miou = max(history["val_miou"])
+            best_epoch = history["val_miou"].index(best_miou) + 1
+            print(f"Best validation mIoU: {best_miou:.4f} (Epoch {best_epoch})")
     
     except KeyboardInterrupt:
-        print("\nAddestramento interrotto dall'utente")
-        print("Salvataggio modello parziale...")
-        model.save(args.output.replace(".pth", "_partial.pth"))
+        print("\nTraining interrupted by user.")
+        print("Saving partial model...")
+        partial_model_path = args.output.replace(".pth", "_partial.pth")
+        model.save(partial_model_path)
+        print(f"Partial model saved to: {partial_model_path}")
     
     except Exception as e:
-        print(f"\nERRORE durante l'addestramento: {str(e)}")
-        # Salva modello di emergenza
-        emergency_path = os.path.join(MODELS_DIR, "emergency_save.pth")
+        print(f"\nERROR during training: {str(e)}")
+        # Save emergency model
+        emergency_path = os.path.join(MODELS_DIR, f"emergency_save_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
         model.save(emergency_path)
-        print(f"Modello di emergenza salvato in: {emergency_path}")
+        print(f"Emergency model saved to: {emergency_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Addestramento Mask R-CNN')
+    parser = argparse.ArgumentParser(description='Mask R-CNN Training Script')
     
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
-                        help='Dimensione del batch')
+                        help='Batch size for training.')
     parser.add_argument('--lr', type=float, default=LEARNING_RATE,
-                        help='Learning rate iniziale')
+                        help='Initial learning rate.')
     parser.add_argument('--epochs', type=int, default=NUM_EPOCHS,
-                        help='Numero di epoche di addestramento')
+                        help='Number of training epochs.')
     parser.add_argument('--num_classes', type=int, default=NUM_CLASSES,
-                        help='Numero di classi (incluso background)')
+                        help='Number of classes (including background).')
     parser.add_argument('--backbone', type=str, default="resnext101_32x8d",
                         choices=["resnext101_32x8d", "resnet50"],
-                        help='Tipo di backbone da utilizzare')
+                        help='Type of backbone to use.')
     parser.add_argument('--no_pretrained', action='store_true',
-                        help='Non utilizzare pesi preaddestrati')
+                        help='Do not use pretrained weights for the backbone.')
     parser.add_argument('--output', type=str, default=MODEL_SAVE_PATH,
-                        help='Percorso per il salvataggio del modello')
+                        help='Path to save the trained model.')
     parser.add_argument('--resume', type=str, default=None,
-                        help='Riprendi addestramento da checkpoint')
+                        help='Resume training from a checkpoint file.')
     parser.add_argument('--clip_grad', type=float, default=1.0,
-                        help='Valore per il clipping dei gradienti (0 per disabilitare)')
+                        help='Value for gradient clipping norm (0 to disable).')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adamw'],
-                        help='Ottimizzatore da utilizzare')
+                        help='Optimizer to use for training (e.g., "sgd", "adamw").')
     
     args = parser.parse_args()
     run_train(args)

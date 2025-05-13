@@ -1,11 +1,11 @@
 import os
 
-# Percorsi di base
+# Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HOME_DIR = os.path.expanduser("/storage/aspoto")
-HOT3D_DATASET_PATH = os.path.join(HOME_DIR, "visor_egohos_synth") 
+HOME_DIR = os.path.expanduser("/storage/aspoto") # User's home directory, specific to this setup
+HOT3D_DATASET_PATH = os.path.join(HOME_DIR, "visor_egohos_synth") # Path to the primary dataset
 
-# Directory del progetto
+# Project directories
 PROJECT_DIR = os.path.join(HOME_DIR, "mask_rcnn_project")
 MODELS_DIR = os.path.join(PROJECT_DIR, "saved_models")
 RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
@@ -13,41 +13,41 @@ DEBUG_OUTPUT_DIR = os.path.join(PROJECT_DIR, "debug_output")
 TENSORBOARD_DIR = os.path.join(PROJECT_DIR, "tensorboard_logs_visor")
 
 DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_hot3d")
-#DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_visor")
+#DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_visor") # Alternative cache dir
 
-# Crea le directory se non esistono
+# Create directories if they don't exist
 for dir_path in [MODELS_DIR, RESULTS_DIR, DEBUG_OUTPUT_DIR, DATASET_CACHE_DIR, TENSORBOARD_DIR]:
     os.makedirs(dir_path, exist_ok=True)
 
-# File di cache del dataset (direttamente nella directory di cache, no sottodirectory)
+# Dataset cache files (directly in the cache directory, no subdirectory)
 TRAIN_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "train_dataset.npy")
 VAL_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "val_dataset.npy")
 TEST_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "test_dataset.npy")
 
-# Parametri di addestramento
+# Training parameters
 BATCH_SIZE = 2
 NUM_EPOCHS = 500
 LEARNING_RATE = 0.001
 NUM_CLASSES = 2  # background + object_in_hand
 RANDOM_SEED = 42
 
-# Parametri del dataset HOT3D
-USE_CAMERAS = ["214-1"]  # Utilizza tutte e tre le telecamere
-TRAIN_CLIPS = [f"clip-{i:06d}" for i in range(1849, 2500)]  # Range di clip da utilizzare per training
-VAL_CLIPS = [f"clip-{i:06d}" for i in range(2500, 2800)]    # Range di clip da utilizzare per validation
-TEST_CLIPS = [f"clip-{i:06d}" for i in range(3365, 3832)]  # Range di clip da utilizzare per test
+# HOT3D dataset parameters (or similar dataset structure)
+USE_CAMERAS = ["214-1"]  # Specific cameras to use
+TRAIN_CLIPS = [f"clip-{i:06d}" for i in range(1849, 2500)]
+VAL_CLIPS = [f"clip-{i:06d}" for i in range(2500, 2800)]
+TEST_CLIPS = [f"clip-{i:06d}" for i in range(3365, 3832)]
 
-# Soglie per determinare se un oggetto è in mano
-IOU_THRESHOLD = 0.1       # Soglia IoU tra mano e oggetto
-DISTANCE_THRESHOLD = 0.01  # Soglia di distanza tra mano e oggetto (in metri)
-VELOCITY_THRESHOLD = 0.01  # Soglia di velocità dell'oggetto (in m/s)
+# Thresholds to determine if an object is in hand
+IOU_THRESHOLD = 0.1       # IoU threshold between hand and object
+DISTANCE_THRESHOLD = 0.01  # Distance threshold between hand and object (in meters)
+VELOCITY_THRESHOLD = 0.01  # Object velocity threshold (in m/s)
 
-# Parametri RLE per le maschere
-RLE_CONVERSION_FORMAT = "coco"  # Formato per conversione RLE
+# RLE parameters for masks
+RLE_CONVERSION_FORMAT = "coco"  # Format for RLE conversion (e.g., "coco", "frumpy")
 
-# Parametri di visualizzazione
-BLUE_MASK_COLOR = [0, 0, 255]  # Blu per le maschere
-MASK_ALPHA = 0.6  # Opacità delle maschere
+# Visualization parameters
+BLUE_MASK_COLOR = [0, 0, 255]
+MASK_ALPHA = 0.6
 
-# Percorso del modello salvato
+# Saved model path
 MODEL_SAVE_PATH = os.path.join(MODELS_DIR, "mask_rcnn_final_visor.pth")

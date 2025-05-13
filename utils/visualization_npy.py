@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Script per visualizzare le prime N immagini dal dataset di training e sovrapporre
-la maschera dell'oggetto in mano.
-"""
-
 import os
 import sys
 import numpy as np
@@ -11,169 +5,173 @@ import cv2
 import argparse
 from tqdm import tqdm
 
-# Aggiungi la directory principale al path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import *
+from config import * 
 
 def visualize_samples(dataset_path, output_dir, num_images=5):
     """
-    Visualizza e salva le prime N immagini dal dataset sovrapposti con le maschere.
+    Visualizes and saves the first N images from the dataset with overlaid masks.
     
     Args:
-        dataset_path: Percorso al file .npy del dataset
-        output_dir: Directory dove salvare le visualizzazioni
-        num_images: Numero di immagini da visualizzare (le prime N)
+        dataset_path: Path to the .npy dataset file.
+        output_dir: Directory to save the visualizations.
+        num_images: Number of images to visualize (the first N).
     """
-    # Crea la directory di output se non esiste
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"Caricamento dataset da {dataset_path}...")
+    print(f"Loading dataset from {dataset_path}...")
     
     try:
-        # Carica l'intero dataset
         data = np.load(dataset_path, allow_pickle=True)
-        print(f"Dataset caricato, dimensione totale: {len(data)} campioni.")
+        print(f"Dataset loaded, total size: {len(data)} samples.")
         
-        # Limita il numero di immagini alla dimensione del dataset
         if num_images > len(data):
             num_images = len(data)
-            print(f"Numero di immagini ridotto a {num_images} (dimensione del dataset).")
+            print(f"Number of images to display reduced to {num_images} (dataset size).")
         
-        # Prendi solo i primi N campioni
-        data = data[:num_images]
+        data_to_visualize = data[:num_images] # Process only the first N samples
         
     except Exception as e:
-        print(f"Errore nel caricare il dataset: {str(e)}")
+        print(f"Error loading dataset: {str(e)}")
         return
     
-    # Visualizza ogni campione
-    for i, sample in enumerate(tqdm(data, desc="Visualizzando immagini")):
-        # Carica l'immagine
+    # Visualize each sample
+    for i, sample in enumerate(tqdm(data_to_visualize, desc="Visualizing images")):
         image_path = sample["image_path"]
         try:
             image = cv2.imread(image_path)
             if image is None:
-                print(f"Impossibile leggere l'immagine: {image_path}")
+                print(f"Could not read image: {image_path}")
                 continue
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # Convert to RGB for consistent display
         except Exception as e:
-            print(f"Errore nel caricare l'immagine {image_path}: {str(e)}")
+            print(f"Error loading image {image_path}: {str(e)}")
             continue
         
-        # Ottieni la maschera
         mask = sample["mask"]
         
-        # Assicurati che la maschera abbia le dimensioni corrette
+        # Ensure the mask has the correct dimensions, resize if necessary
         if mask.shape[:2] != image.shape[:2]:
             mask = cv2.resize(mask, (image.shape[1], image.shape[0]), 
                              interpolation=cv2.INTER_NEAREST)
         
-        # Crea una visualizzazione combinata: immagine originale, maschera, sovrapposizione
+        # --- Create a combined visualization: original image, mask, overlay ---
         
-        # 1. Immagine originale
+        # 1. Original image
         orig_image = image.copy()
         
-        # 2. Maschera a colori (per una migliore visualizzazione)
-        colored_mask = np.zeros_like(image)
-        colored_mask[mask > 0] = [0, 0, 255]  # Colore blu per la maschera
+        # 2. Colored mask (for better visualization)
+        colored_mask_viz = np.zeros_like(image)
+        colored_mask_viz[mask > 0] = [0, 0, 255]  # Blue color for the mask
         
-        # 3. Immagine con maschera sovrapposta
+        # 3. Image with overlaid mask
         masked_image = image.copy()
-        alpha = 0.5  # Opacità della maschera
+        alpha = 0.5  # Mask opacity
         mask_bool = mask > 0
+        # Apply color only where mask is True
         masked_image[mask_bool] = (masked_image[mask_bool] * (1 - alpha) + 
-                                  colored_mask[mask_bool] * alpha).astype(np.uint8)
+                                   colored_mask_viz[mask_bool] * alpha).astype(np.uint8)
         
-        # Crea un'immagine composita con tutte e tre le visualizzazioni affiancate
-        composite = np.concatenate([orig_image, colored_mask, masked_image], axis=1)
+        # Create a composite image with all three visualizations side-by-side
+        composite = np.concatenate([orig_image, colored_mask_viz, masked_image], axis=1)
         
-        # Aggiungi informazioni come testo
+        # Add information as text to the composite image
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5
-        font_color = (255, 255, 255)  # Bianco
+        font_color = (255, 255, 255)  # White
         font_thickness = 1
         
-        # Informazioni da aggiungere
-        clip_name = sample.get("clip_name", "Unknown")
-        frame_id = sample.get("frame_id", "Unknown")
-        camera_id = sample.get("camera_id", "Unknown")
+        # Information to display
+        clip_name = sample.get("clip_name", "N/A")
+        frame_id = sample.get("frame_id", "N/A")
+        camera_id = sample.get("camera_id", "N/A")
         
-        info_text = f"Clip: {clip_name}, Frame: {frame_id}, Camera: {camera_id}"
+        info_text = f"Clip: {clip_name}, Frame: {frame_id}, Cam: {camera_id}"
         
-        # Aggiungi il testo alla parte inferiore dell'immagine
-        text_size = cv2.getTextSize(info_text, font, font_scale, font_thickness)[0]
+        # Add text to the bottom of the image
+        (text_w, text_h), baseline = cv2.getTextSize(info_text, font, font_scale, font_thickness)
         text_x = 10
-        text_y = composite.shape[0] - 10  # 10 pixel dal basso
+        text_y = composite.shape[0] - 10  # 10 pixels from the bottom
         
-        # Aggiungi un rettangolo nero dietro il testo per leggibilità
+        # Add a black rectangle behind the text for readability
         cv2.rectangle(composite, 
-                     (text_x - 5, text_y - text_size[1] - 5), 
-                     (text_x + text_size[0] + 5, text_y + 5), 
+                     (text_x - 5, text_y - text_h - 5), 
+                     (text_x + text_w + 5, text_y + baseline - 2), # Adjusted for better fit
                      (0, 0, 0), 
-                     -1)  # -1 per riempire il rettangolo
+                     -1)  # -1 to fill the rectangle
         
         cv2.putText(composite, 
                    info_text, 
-                   (text_x, text_y), 
+                   (text_x, text_y - (baseline//2)), # Adjust y for baseline
                    font, 
                    font_scale, 
                    font_color, 
                    font_thickness)
         
-        # Aggiungi intestazioni per chiarire ciascuna immagine
-        headers = ["Immagine originale", "Maschera", "Sovrapposizione"]
+        # Add headers to clarify each image segment
+        headers = ["Original Image", "Mask", "Overlay"]
         segment_width = composite.shape[1] // 3
         
-        for idx, header in enumerate(headers):
-            text_size = cv2.getTextSize(header, font, font_scale, font_thickness)[0]
-            text_x = idx * segment_width + (segment_width - text_size[0]) // 2
-            text_y = 20  # 20 pixel dall'alto
+        for idx, header_text in enumerate(headers):
+            (text_w_h, text_h_h), baseline_h = cv2.getTextSize(header_text, font, font_scale, font_thickness)
+            header_x = idx * segment_width + (segment_width - text_w_h) // 2
+            header_y = 20  # 20 pixels from the top
             
-            # Aggiungi rettangolo nero
+            # Add black rectangle for header background
             cv2.rectangle(composite, 
-                         (text_x - 5, text_y - text_size[1] - 5), 
-                         (text_x + text_size[0] + 5, text_y + 5), 
+                         (header_x - 5, header_y - text_h_h - 5), 
+                         (header_x + text_w_h + 5, header_y + baseline_h - 2), 
                          (0, 0, 0), 
                          -1)
             
             cv2.putText(composite, 
-                       header, 
-                       (text_x, text_y), 
+                       header_text, 
+                       (header_x, header_y - (baseline_h//2)), 
                        font, 
                        font_scale, 
                        font_color, 
                        font_thickness)
         
-        # Salva l'immagine composita
+        # Save the composite image
         output_file = os.path.join(output_dir, f"sample_{i+1:03d}.jpg")
-        cv2.imwrite(output_file, cv2.cvtColor(composite, cv2.COLOR_RGB2BGR))
+        # Convert back to BGR for OpenCV imwrite if image was RGB
+        cv2.imwrite(output_file, cv2.cvtColor(composite, cv2.COLOR_RGB2BGR)) 
     
-    print(f"Visualizzazioni salvate in {output_dir}")
+    print(f"Visualizations saved to {output_dir}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Visualizza le prime N immagini dal dataset con maschere')
+    """
+    Script to visualize the first N images from the training dataset
+    and overlay the in-hand object mask.
+    """
+    parser = argparse.ArgumentParser(description='Visualizes the first N images from the dataset with masks.')
     parser.add_argument('--dataset', choices=['train', 'val', 'test'], default='train',
-                        help='Dataset da visualizzare (train, val o test)')
+                        help='Dataset split to visualize (train, val, or test).')
     parser.add_argument('--images', type=int, default=5,
-                        help='Numero di immagini da visualizzare (le prime N)')
+                        help='Number of images to visualize (the first N from the selected dataset).')
     parser.add_argument('--output_dir', default='visualizations',
-                        help='Directory dove salvare le visualizzazioni')
+                        help='Base directory to save the visualization images.')
     
     args = parser.parse_args()
     
-    # Determina il percorso del dataset in base all'argomento
+    # Determine the dataset path based on the argument
     if args.dataset == 'train':
         dataset_path = TRAIN_CACHE_PATH
     elif args.dataset == 'val':
         dataset_path = VAL_CACHE_PATH
-    else:
+    else: # 'test'
         dataset_path = TEST_CACHE_PATH
     
-    # Crea la directory di output completa
-    output_dir = os.path.join(args.output_dir, args.dataset)
+    if not os.path.exists(dataset_path):
+        print(f"ERROR: Dataset cache file not found at {dataset_path}")
+        print("Please ensure the dataset has been preprocessed and cached.")
+        return
+
+    # Create the full output directory path (e.g., visualizations/train)
+    full_output_dir = os.path.join(args.output_dir, args.dataset)
     
-    # Visualizza i campioni
-    visualize_samples(dataset_path, output_dir, args.images)
+    # Visualize the samples
+    visualize_samples(dataset_path, full_output_dir, args.images)
 
 if __name__ == "__main__":
     main()

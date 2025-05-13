@@ -1,113 +1,103 @@
-#!/usr/bin/env python3
-"""
-Script principale per l'addestramento, la valutazione e l'inferenza 
-del modello Mask R-CNN sul dataset Visor per la segmentazione di oggetti in mano.
-"""
-
 import os
 import sys
 import argparse
 from datetime import datetime
 
-# Aggiungi la directory principale al path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Importa i moduli
 from train import run_train
 from evaluate import run_evaluation
 from inference import run_inference
-from config import *
+from config import * 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Mask R-CNN per la segmentazione di oggetti in mano nel dataset Visor',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description='Mask R-CNN for in-hand object segmentation on the Visor dataset.', 
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter 
     )
     
-    # Comandi principali
-    subparsers = parser.add_subparsers(dest='command', help='Comando da eseguire')
-    subparsers.required = True
+    # Main commands (train, evaluate, inference)
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+    subparsers.required = True # Ensures a command must be provided
     
-    # Comando per l'addestramento
-    train_parser = subparsers.add_parser('train', help='Addestramento del modello')
+    # --- Training command ---
+    train_parser = subparsers.add_parser('train', help='Train the Mask R-CNN model')
     train_parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
-                        help='Dimensione del batch')
+                        help='Batch size for training.')
     train_parser.add_argument('--lr', type=float, default=LEARNING_RATE,
-                        help='Learning rate iniziale')
+                        help='Initial learning rate for the optimizer.')
     train_parser.add_argument('--epochs', type=int, default=NUM_EPOCHS,
-                        help='Numero di epoche di addestramento')
+                        help='Total number of training epochs.')
     train_parser.add_argument('--num_classes', type=int, default=NUM_CLASSES,
-                        help='Numero di classi (incluso background)')
+                        help='Number of classes including the background (e.g., N_actual_classes + 1).')
     train_parser.add_argument('--backbone', type=str, default="resnext101_32x8d",
                         choices=["resnext101_32x8d", "resnet50"],
-                        help='Tipo di backbone da utilizzare')
+                        help='Backbone architecture to use for the Mask R-CNN model.')
     train_parser.add_argument('--no_pretrained', action='store_true',
-                        help='Non utilizzare pesi preaddestrati')
+                        help='If set, do not use pretrained weights for the backbone (e.g., from ImageNet).')
     train_parser.add_argument('--output', type=str, default=MODEL_SAVE_PATH,
-                        help='Percorso per il salvataggio del modello')
+                        help='Path where the trained model checkpoints will be saved.')
     train_parser.add_argument('--resume', type=str, default=None,
-                        help='Riprendi addestramento da checkpoint')
+                        help='Path to a model checkpoint to resume training from.')
     train_parser.add_argument('--clip_grad_norm', type=float, default=1.0,
-                        help='Valore per il clipping dei gradienti (0 per disabilitare)')
+                        help='Maximum norm for gradient clipping (set to 0 to disable).')
     train_parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adamw'],
-                        help='Ottimizzatore da utilizzare')
+                        help='Optimizer to use during training.')
     
-    # Comando per la valutazione
-    eval_parser = subparsers.add_parser('evaluate', help='Valutazione del modello')
+    # --- Evaluation command ---
+    eval_parser = subparsers.add_parser('evaluate', help='Evaluate a trained Mask R-CNN model')
     eval_parser.add_argument('--model', type=str, required=True,
-                        help='Percorso al modello da valutare')
+                        help='Path to the trained model file (.pth) to evaluate.')
     eval_parser.add_argument('--dataset_type', type=str, default='test',
                         choices=['train', 'val', 'test'],
-                        help='Tipo di dataset da utilizzare per la valutazione')
+                        help='Dataset split to use for evaluation (train, val, or test).')
     eval_parser.add_argument('--threshold', type=float, default=0.5,
-                        help='Soglia di confidenza per le predizioni')
+                        help='Confidence score threshold for considering a prediction.')
     eval_parser.add_argument('--iou_threshold', type=float, default=0.5,
-                        help='Soglia IoU per considerare un match')
+                        help='IoU threshold for considering a predicted mask a true positive match.')
     eval_parser.add_argument('--num_classes', type=int, default=NUM_CLASSES,
-                        help='Numero di classi (incluso background)')
+                        help='Number of classes (including background) the model was trained with.')
     eval_parser.add_argument('--backbone', type=str, default="resnext101_32x8d",
                         choices=["resnext101_32x8d", "resnet50"],
-                        help='Tipo di backbone utilizzato nel modello')
+                        help='Backbone architecture of the model being evaluated (must match the loaded model).')
     
-    # Comando per l'inferenza
-    inference_parser = subparsers.add_parser('inference', help='Inferenza del modello')
+    # --- Inference command ---
+    inference_parser = subparsers.add_parser('inference', help='Run inference with a trained model on images')
     inference_parser.add_argument('--model', type=str, required=True,
-                        help='Percorso al modello da utilizzare')
+                        help='Path to the trained model file (.pth) to use for inference.')
     inference_parser.add_argument('--input', type=str, required=True,
-                        help='Percorso all\'immagine o directory di immagini')
+                        help='Path to an input image or a directory containing images.')
     inference_parser.add_argument('--output', type=str, default='inference_results',
-                        help='Directory di output per i risultati')
+                        help='Directory where inference results (annotated images) will be saved.')
     inference_parser.add_argument('--threshold', type=float, default=0.5,
-                        help='Soglia di confidenza per le predizioni')
+                        help='Confidence score threshold for displaying predictions.')
     inference_parser.add_argument('--num_classes', type=int, default=NUM_CLASSES,
-                        help='Numero di classi (incluso background)')
-    parser.add_argument('--class_names', type=str, default=None,
-                        help='Nomi delle classi separati da virgola')
-    parser.add_argument('--threshold', type=float, default=0.5,
-                        help='Soglia di confidenza per le predizioni')
-    parser.add_argument('--show', action='store_true',
-                        help='Mostra le immagini elaborate (solo per singola immagine)')
+                        help='Number of classes (including background) the model was trained with.')
+    inference_parser.add_argument('--class_names', type=str, default=None,
+                        help='Comma-separated class names for visualization (e.g., "background,obj1,obj2"). Order should match model output.')
+    inference_parser.add_argument('--show', action='store_true',
+                        help='If set, display processed images (only applicable if the input is a single image).')
     
-    # Parsing degli argomenti
+    # Parse the command-line arguments
     args = parser.parse_args()
     
-    # Timestamp per log
+    # Timestamp for logging execution start
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] Esecuzione comando: {args.command}")
+    print(f"[{timestamp}] Executing command: {args.command}")
     
     if args.command == 'train':
-        print("Avvio addestramento modello...")
+        print("Starting model training...")
         run_train(args)
     
     elif args.command == 'evaluate':
-        print("Avvio valutazione modello...")
+        print("Starting model evaluation...")
         run_evaluation(args)
     
     elif args.command == 'inference':
-        print("Avvio inferenza modello...")
-        run_inference(args)
+        print("Starting model inference...")
+        run_inference(args) 
     
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Comando {args.command} completato.")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Command '{args.command}' completed.")
 
 if __name__ == "__main__":
     main()

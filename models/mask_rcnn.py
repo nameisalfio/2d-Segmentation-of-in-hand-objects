@@ -7,7 +7,8 @@ import cv2
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 from torchvision.models.detection.mask_rcnn import MaskRCNN_ResNet50_FPN_Weights
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
-from torchvision.models.resnet import ResNeXt101_32X8D_Weights
+from torchvision.models.resnet import ResNeXt101_32X8D_Weights 
+# from torchvision.models.resnet import resnext101_32x8d, ResNeXt101_32X8D_Weights # Alternative if above is not found
 from torchvision.models.detection.mask_rcnn import MaskRCNN
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
@@ -19,643 +20,501 @@ class MaskRCNNModel:
     def __init__(self, num_classes=NUM_CLASSES, pretrained=True, backbone_name="resnext101_32x8d", 
             clip_grad_norm=0.0, optimizer_type='sgd'):
         """
-        Inizializza il modello Mask R-CNN con backbone ResNeXt-101-FPN
+        Initializes the Mask R-CNN model, typically with a ResNeXt-101-FPN backbone.
         
         Args:
-            num_classes: Numero di classi (background + classi di oggetti)
-            pretrained: Se usare pesi preaddestrati
-            backbone_name: Nome del backbone da usare (default: "resnext101_32x8d")
-            clip_grad_norm: Valore per il clipping dei gradienti (0 per disattivare)
-            optimizer_type: Tipo di ottimizzatore ('sgd' o 'adamw')
+            num_classes (int): Number of classes (background + object classes).
+            pretrained (bool): Whether to use pretrained weights for the backbone.
+            backbone_name (str): Name of the backbone to use (default: "resnext101_32x8d").
+                                 Supports "resnet50" as a fallback.
+            clip_grad_norm (float): Value for gradient clipping (0 to disable).
+            optimizer_type (str): Type of optimizer ('sgd' or 'adamw').
         """
-        # Seleziona il dispositivo
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Utilizzando dispositivo: {self.device}")
+        print(f"Using device: {self.device}")
         
-        # Salva i parametri di configurazione
         self.clip_grad_norm = clip_grad_norm
         self.optimizer_type = optimizer_type
         
-        # Crea il backbone personalizzato
         if backbone_name == "resnext101_32x8d":
-            print("Utilizzo backbone ResNeXt-101-FPN per Mask R-CNN")
+            print("Using ResNeXt-101-FPN backbone for Mask R-CNN")
             
+            backbone_weights = ResNeXt101_32X8D_Weights.IMAGENET1K_V1 if pretrained else None
             if pretrained:
-                # Usa i pesi preaddestrati per il backbone
-                weights = ResNeXt101_32X8D_Weights.IMAGENET1K_V1
-                print("Caricamento pesi preaddestrati su ImageNet")
+                print("Loading ImageNet pretrained weights for backbone.")
             else:
-                weights = None
-                print("Inizializzazione da zero")
+                print("Initializing backbone from scratch.")
             
-            # Crea il backbone ResNeXt-101 con FPN
             backbone = resnet_fpn_backbone(
-                backbone_name=backbone_name, 
-                weights=weights,
-                trainable_layers=5  # Tutti i layers sono addestrabili
+                backbone_name='resnext101_32x8d', # Explicitly use string for backbone_name
+                weights=backbone_weights,
+                trainable_layers=5  # All layers are trainable
             )
             
             self.model = MaskRCNN(
                 backbone=backbone,
                 num_classes=num_classes,
-                min_size=800,
-                max_size=1333,
-                image_mean=[0.485, 0.456, 0.406],
-                image_std=[0.229, 0.224, 0.225]
+                min_size=800,       # Default TorchVision M RCNN min_size
+                max_size=1333,      # Default TorchVision M RCNN max_size
+                image_mean=[0.485, 0.456, 0.406], # ImageNet means
+                image_std=[0.229, 0.224, 0.225]   # ImageNet stds
             )
             
-        else:
-            # Fallback al ResNet-50-FPN standard
-            print(f"Backbone {backbone_name} non supportato, utilizzo ResNet-50-FPN standard")
+        else: # Fallback to standard ResNet-50-FPN
+            print(f"Backbone '{backbone_name}' not 'resnext101_32x8d', using standard ResNet-50-FPN.")
             
-            if pretrained:
-                weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT
-                self.model = maskrcnn_resnet50_fpn(weights=weights)
-            else:
-                self.model = maskrcnn_resnet50_fpn()
+            model_weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT if pretrained else None
+            self.model = maskrcnn_resnet50_fpn(weights=model_weights, weights_backbone=ResNet50_Weights.IMAGENET1K_V1 if pretrained and model_weights is None else None)
+            # If model_weights is None (i.e., not using COCO pretrained MaskRCNN), then we might want to explicitly set backbone weights.
+            # If model_weights is DEFAULT, it already includes a pretrained backbone.
+
+            # The number of output classes for the FasterRCNN box predictor needs to be adjusted
+            in_features_box = self.model.roi_heads.box_predictor.cls_score.in_features
+            self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features_box, num_classes)
+
+            # The number of output classes for the MaskRCNN mask predictor needs to be adjusted
+            in_features_mask = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
+            hidden_layer_mask = 256 # Default hidden layer size
+            self.model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer_mask, num_classes)
+
+
+        # For both custom and standard backbone, ensure the final layers match num_classes
+        # Get the number of input features for the classifier
+        in_features_classifier = self.model.roi_heads.box_predictor.cls_score.in_features
+        # Replace the pre-trained head with a new one (e.g., for binary classification: background + object_in_hand)
+        self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features_classifier, num_classes)
         
-        # Ottieni il numero di feature di input
-        in_features = self.model.roi_heads.box_predictor.cls_score.in_features
+        # Get the number of input features for the mask classifier
+        in_features_mask_predictor = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
+        hidden_layer_dim = 256 # Standard hidden layer dimension for mask predictor
+        # Replace the mask predictor with a new one
+        self.model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask_predictor, hidden_layer_dim, num_classes)
         
-        # Classificazione binaria (background + object_in_hand)
-        self.model.roi_heads.box_predictor = torchvision.models.detection.faster_rcnn.FastRCNNPredictor(
-            in_features, num_classes
-        )
-        
-        # Ottieni il numero di feature di input per il mask predictor
-        in_features_mask = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
-        hidden_layer = 256
-        
-        # Sostituisci il mask predictor
-        self.model.roi_heads.mask_predictor = torchvision.models.detection.mask_rcnn.MaskRCNNPredictor(
-            in_features_mask, hidden_layer, num_classes
-        )
-        
-        # Sposta il modello sul dispositivo appropriato
         self.model.to(self.device)
         
-        # Stampa informazioni sul modello
-        num_params = sum(p.numel() for p in self.model.parameters())
-        print(f"Numero totale di parametri: {num_params:,}")
+        num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad) # Count only trainable parameters
+        print(f"Total trainable parameters: {num_params:,}")
 
     def train(self, train_loader, val_loader, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE, model_save_path=MODEL_SAVE_PATH):
         """
-        Addestra il modello Mask R-CNN
+        Trains the Mask R-CNN model.
         
         Args:
-            train_loader: DataLoader per i dati di training
-            val_loader: DataLoader per i dati di validazione
-            num_epochs: Numero di epoche di addestramento
-            learning_rate: Learning rate iniziale
-            model_save_path: Percorso dove salvare il modello
+            train_loader: DataLoader for the training data.
+            val_loader: DataLoader for the validation data.
+            num_epochs (int): Number of training epochs.
+            learning_rate (float): Initial learning rate.
+            model_save_path (str): Path to save the best and final model.
                 
         Returns:
-            Dictionary con storico delle metriche di addestramento
+            dict: Dictionary containing training history (losses, metrics).
         """
-        # Inizializza il writer per TensorBoard
-        writer = SummaryWriter(TENSORBOARD_DIR)
+        writer = SummaryWriter(TENSORBOARD_DIR) # Initialize TensorBoard writer
         
-        # Imposta l'ottimizzatore in base al tipo specificato
         params = [p for p in self.model.parameters() if p.requires_grad]
         
-        if self.optimizer_type == 'adamw':
+        if self.optimizer_type.lower() == 'adamw':
             optimizer = torch.optim.AdamW(params, lr=learning_rate, weight_decay=0.0001)
-            print(f"Utilizzo ottimizzatore AdamW con learning rate {learning_rate}")
-        else:
+            print(f"Using AdamW optimizer with learning rate {learning_rate}")
+        else: # Default to SGD
             optimizer = torch.optim.SGD(params, lr=learning_rate, momentum=0.9, weight_decay=0.0005)
-            print(f"Utilizzo ottimizzatore SGD con learning rate {learning_rate}")
+            print(f"Using SGD optimizer with learning rate {learning_rate}")
         
-        # Scheduler per learning rate decay - rimuovi parametro 'verbose' per eliminare il warning
+        # Learning rate scheduler (ReduceLROnPlateau)
         lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.1, patience=3
+            optimizer, mode='min', factor=0.1, patience=3 # 'verbose' argument removed or set to False
         )
         
-        # Dizionario per tracciare le metriche
         history = {
             "train_loss": [],
             "val_loss": [],
             "val_miou": []
         }
         
-        # Loop di addestramento
         best_val_miou = 0.0
         
-        # Imposta il modello in modalità training
-        self.model.train()
-        
         for epoch in range(num_epochs):
-            print(f"\nEpoca {epoch+1}/{num_epochs}")
+            self.model.train() # Set model to training mode
+            print(f"\nEpoch {epoch+1}/{num_epochs}")
             
-            # Training
-            running_loss = 0.0
-            epoch_loss = []
+            running_loss_accum = 0.0 # Accumulator for average loss display
+            epoch_losses = [] # List to store losses for each batch in the epoch
             
-            # Progress bar per il training
             train_pbar = tqdm(train_loader, desc=f"Training [{epoch+1}/{num_epochs}]")
             
-            for images, targets in train_pbar:
-                # Sposta i dati sul device
+            for i, (images, targets) in enumerate(train_pbar):
                 images = [image.to(self.device) for image in images]
                 targets = [{k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
                 
-                # Verifica che ci siano bounding box validi
-                valid_batch = True
-                for t in targets:
-                    if t["boxes"].numel() == 0:
-                        valid_batch = False
-                        break
-                
+                # Skip batch if any target has no bounding boxes (can cause errors in model)
+                valid_batch = all(t["boxes"].numel() > 0 for t in targets)
                 if not valid_batch:
+                    # print(f"Skipping batch {i} due to empty boxes in one or more targets.")
                     continue
                 
-                # Azzera i gradienti
                 optimizer.zero_grad()
                 
                 try:
-                    # Forward pass
-                    loss_dict = self.model(images, targets)
+                    loss_dict = self.model(images, targets) # Forward pass
                     
-                    # Verifica che loss_dict sia un dizionario
                     if not isinstance(loss_dict, dict):
-                        print(f"Warning: loss_dict non è un dizionario ma {type(loss_dict)}")
+                        print(f"Warning: loss_dict is not a dictionary but {type(loss_dict)}, skipping batch.")
                         continue
                     
-                    # Calcola la loss totale
-                    losses = sum(loss for loss in loss_dict.values())
+                    losses = sum(loss for loss in loss_dict.values()) # Calculate total loss
                     
-                    # Verifica se la loss è NaN o infinita
                     if not torch.isfinite(losses):
-                        print(f"Warning: Loss è {losses.item()}, salto questo batch")
+                        print(f"Warning: Loss is {losses.item()}, skipping this batch.")
                         continue
                     
-                    # Backward pass
-                    losses.backward()
+                    losses.backward() # Backward pass
                     
-                    # Applica clipping dei gradienti se specificato
-                    if self.clip_grad_norm > 0:
+                    if self.clip_grad_norm > 0: # Apply gradient clipping if specified
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
                     
-                    # Aggiorna i pesi
-                    optimizer.step()
+                    optimizer.step() # Update weights
                     
-                    # Aggiorna la progress bar
-                    running_loss += losses.item()
-                    epoch_loss.append(losses.item())
-                    train_pbar.set_postfix(loss=f"{running_loss/(train_pbar.n+1):.4f}")
+                    running_loss_accum += losses.item()
+                    epoch_losses.append(losses.item())
+                    train_pbar.set_postfix(loss=f"{running_loss_accum/(i+1):.4f}") # Update progress bar
                 except Exception as e:
-                    print(f"Errore durante il training: {str(e)}")
-                    continue
+                    print(f"Error during training batch: {str(e)}. Skipping batch.")
+                    continue # Skip to the next batch
             
-            # Calcola la loss media per l'epoca
-            avg_train_loss = sum(epoch_loss) / max(len(epoch_loss), 1)
+            avg_train_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
             history["train_loss"].append(avg_train_loss)
-            
-            # Log su TensorBoard
             writer.add_scalar('Loss/train', avg_train_loss, epoch)
             
-            # Imposta il modello in modalità valutazione
-            self.model.eval()
-            
-            # Calcola le metriche sul validation set
+            # Validation phase
             val_metrics = self.evaluate(val_loader, epoch=epoch, writer=writer)
             val_loss = val_metrics["loss"]
             val_miou = val_metrics["miou"]
             
-            # Aggiorna lo scheduler
-            lr_scheduler.step(val_loss)
+            lr_scheduler.step(val_loss) # Adjust learning rate based on validation loss
             
-            # Salva le metriche
             history["val_loss"].append(val_loss)
             history["val_miou"].append(val_miou)
             
-            # Stampa le metriche
-            print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}, Val mIoU: {val_miou:.4f}")
+            print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}, Val mIoU: {val_miou:.4f}")
             
-            # Salva il modello se è il migliore finora
-            if val_miou > best_val_miou:
+            if val_miou > best_val_miou: # Save model if it's the best so far
                 best_val_miou = val_miou
                 self.save(model_save_path)
-                print(f"Salvato miglior modello con mIoU: {val_miou:.4f}")
-            
-            # Ripristina modalità training per la prossima epoca
-            self.model.train()
+                print(f"Saved best model with mIoU: {val_miou:.4f} at {model_save_path}")
         
-        # Salva il modello finale
-        self.save(model_save_path)
+        # Save the final model (could be different from the best if mIoU fluctuates)
+        final_model_path = model_save_path.replace(".pth", "_final.pth")
+        self.save(final_model_path)
+        print(f"Saved final model at {final_model_path}")
         
-        # Chiudi il writer
         writer.close()
-        
         return history
 
     def evaluate(self, data_loader, epoch=None, writer=None):
         """
-        Valuta il modello su dati di validazione/test calcolando mIoU
+        Evaluates the model on validation/test data, calculating loss and mIoU.
         
         Args:
-            data_loader: DataLoader per i dati di validazione/test
-            epoch: Numero dell'epoca corrente (per logging)
-            writer: SummaryWriter per TensorBoard logging
+            data_loader: DataLoader for the validation/test data.
+            epoch (int, optional): Current epoch number (for logging).
+            writer (SummaryWriter, optional): TensorBoard SummaryWriter for logging.
                 
         Returns:
-            Dictionary con metriche di valutazione
+            dict: Dictionary with evaluation metrics ('loss', 'miou').
         """
-        self.model.eval()
+        self.model.eval() # Set model to evaluation mode
         
-        all_losses = []
-        all_preds = []
-        all_targets = []
+        all_batch_losses = []
+        all_preds_for_miou = []
+        all_targets_for_miou = []
         
-        # Disabilita il calcolo dei gradienti
-        with torch.no_grad():
-            for images, targets in tqdm(data_loader, desc="Validazione"):
-                # Sposta i dati sul device
+        with torch.no_grad(): # Disable gradient calculations during evaluation
+            for images, targets in tqdm(data_loader, desc="Validating"):
                 images = [image.to(self.device) for image in images]
-                targets_device = [{k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+                # Targets for loss calculation need to be on device
+                targets_for_loss_calc = [{k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
                 
-                # Verifica che ci siano bounding box validi
-                valid_batch = True
-                for t in targets_device:
-                    if t["boxes"].numel() == 0:
-                        valid_batch = False
-                        break
-                
-                if not valid_batch:
-                    continue
-                
+                # Ensure valid targets for loss calculation
+                valid_batch_for_loss = all(t["boxes"].numel() > 0 for t in targets_for_loss_calc)
+
+                current_batch_loss = 0.0
                 try:
-                    # In modalità eval, facciamo due passaggi:
-                    # 1. Forward con targets per calcolare la loss
-                    self.model.train()  # Temporaneamente in train mode per calcolare la loss
-                    loss_dict = self.model(images, targets_device)
-                    self.model.eval()   # Torna in eval mode
+                    # 1. Calculate loss (temporarily switch to train mode for model to return loss_dict)
+                    if valid_batch_for_loss:
+                        self.model.train() 
+                        loss_dict = self.model(images, targets_for_loss_calc)
+                        self.model.eval() # Switch back to eval mode
+                        
+                        if isinstance(loss_dict, dict):
+                            losses = sum(loss for loss in loss_dict.values())
+                            current_batch_loss = losses.item()
+                            all_batch_losses.append(current_batch_loss)
+                        else:
+                            print(f"Unexpected output type during loss calculation: {type(loss_dict)}")
+                    # else: if not valid_batch_for_loss, loss for this batch is effectively 0 or skipped.
+
+                    # 2. Get predictions for mIoU calculation (model should be in eval mode)
+                    outputs = self.model(images) # Get predictions
                     
-                    # Verifica il tipo di output
-                    if isinstance(loss_dict, dict):
-                        # Loss dict è un dizionario come previsto
-                        losses = sum(loss for loss in loss_dict.values())
-                        all_losses.append(losses.item())
-                    else:
-                        print(f"Tipo di output non gestito durante il calcolo loss: {type(loss_dict)}")
-                    
-                    # 2. Forward senza targets per le predizioni
-                    outputs = self.model(images)
-                    
-                    # Raccolta predizioni e target per il calcolo delle metriche
-                    for output, target in zip(outputs, targets):
-                        # Verifica che output sia un dizionario
+                    for output, target_cpu in zip(outputs, targets): # Use original targets (on CPU) for mIoU
                         if not isinstance(output, dict):
-                            print(f"Errore: output non è un dizionario ma {type(output)}")
+                            print(f"Error: prediction output is not a dictionary but {type(output)}")
                             continue
                             
                         pred_boxes = output['boxes'].cpu()
                         pred_scores = output['scores'].cpu()
                         pred_labels = output['labels'].cpu()
-                        pred_masks = output['masks'].cpu()
+                        pred_masks = output['masks'].cpu() # Shape: (N_preds, 1, H, W)
                         
-                        # Usa solo predizioni con score > 0.5
-                        keep = pred_scores > 0.5
-                        if torch.any(keep):
-                            pred_boxes = pred_boxes[keep]
-                            pred_scores = pred_scores[keep]
-                            pred_labels = pred_labels[keep]
-                            pred_masks = pred_masks[keep]
+                        # Filter predictions by score for mIoU calculation
+                        # Using a fixed or passed threshold might be better than hardcoded 0.5 here
+                        # For now, assume predict() handles thresholding if this is for general eval
+                        keep = pred_scores > 0.05 # Lower threshold for mIoU calculation to include more preds
                         
-                            # Salva predizioni e ground truth per calcolare le metriche
-                            all_preds.append({
-                                'boxes': pred_boxes,
-                                'scores': pred_scores,
-                                'labels': pred_labels,
-                                'masks': pred_masks
-                            })
-                            
-                            all_targets.append({
-                                'boxes': target['boxes'],
-                                'labels': target['labels'],
-                                'masks': target['masks']
-                            })
+                        # Store predictions and ground truth for mIoU calculation
+                        all_preds_for_miou.append({
+                            'boxes': pred_boxes[keep],
+                            'scores': pred_scores[keep],
+                            'labels': pred_labels[keep],
+                            'masks': pred_masks[keep] # Store filtered masks
+                        })
+                        
+                        all_targets_for_miou.append({ # Ensure GT masks are in the expected format for calculate_miou
+                            'boxes': target_cpu['boxes'],
+                            'labels': target_cpu['labels'],
+                            'masks': target_cpu['masks'] # GT masks: (N_gt, H, W)
+                        })
                 except Exception as e:
-                    print(f"Errore durante la valutazione: {str(e)}")
+                    print(f"Error during evaluation batch: {str(e)}. Skipping batch metrics.")
                     continue
         
-        # Calcola la loss media
-        avg_loss = sum(all_losses) / max(len(all_losses), 1) if all_losses else 0.0
+        avg_loss = sum(all_batch_losses) / len(all_batch_losses) if all_batch_losses else 0.0
         
-        # Calcola mIoU (Mean Intersection over Union)
-        try:
-            if all_preds and all_targets:
-                miou = self.calculate_miou(all_preds, all_targets)
-            else:
-                print("Nessuna predizione o target valido per calcolare mIoU")
-                miou = 0.0
-        except Exception as e:
-            print(f"Errore nel calcolo della mIoU: {str(e)}")
-            miou = 0.0
-        
-        # Logging su TensorBoard se richiesto
+        miou = 0.0
+        if all_preds_for_miou and all_targets_for_miou:
+            try:
+                miou = self.calculate_miou(all_preds_for_miou, all_targets_for_miou)
+            except Exception as e:
+                print(f"Error calculating mIoU: {str(e)}")
+                miou = 0.0 
+        else:
+            print("No valid predictions or targets to calculate mIoU.")
+            
         if writer is not None and epoch is not None:
             writer.add_scalar('Loss/val', avg_loss, epoch)
             writer.add_scalar('mIoU/val', miou, epoch)
         
-        # Ritorna le metriche
-        metrics = {
-            "loss": avg_loss,
-            "miou": miou
-        }
-        
-        print(f"Validation: Loss={avg_loss:.4f}, mIoU={miou:.4f}")
-        
+        metrics = {"loss": avg_loss, "miou": miou}
+        print(f"Validation - Avg Loss: {avg_loss:.4f}, mIoU: {miou:.4f}")
         return metrics
 
     def calculate_miou(self, all_preds, all_targets, iou_threshold=0.5, mask_binarize_threshold=0.5):
         """
-        Calcola la Mean Intersection over Union (mIoU) per le maschere.
-        Questa versione cerca la *migliore corrispondenza* per ogni maschera GT.
+        Calculates Mean Intersection over Union (mIoU) for masks.
+        This version finds the *best match* for each GT mask.
 
         Args:
-            all_preds: Lista di dizionari con le predizioni filtrate per score.
-                    Ogni dizionario contiene 'masks': Tensor (N_preds, 1, H, W) float [0,1]
-            all_targets: Lista di dizionari con i ground truth.
-                        Ogni dizionario contiene 'masks': Tensor (N_gt, H, W) o (N_gt, 1, H, W) uint8/bool
-            iou_threshold: Soglia IoU per considerare una corrispondenza (non usata per mIoU puro).
-            mask_binarize_threshold: Soglia per convertire le maschere predette (float) in binarie.
+            all_preds (list): List of dictionaries with predictions.
+                              Each dict contains 'masks': Tensor (N_preds, 1, H, W) float [0,1].
+            all_targets (list): List of dictionaries with ground truths.
+                                Each dict contains 'masks': Tensor (N_gt, H, W) uint8/bool.
+            iou_threshold (float): IoU threshold for considering a match (not strictly used for pure mIoU per GT).
+            mask_binarize_threshold (float): Threshold to convert predicted float masks to binary.
 
         Returns:
-            mIoU: Mean Intersection over Union media su tutte le maschere GT.
+            float: Mean IoU averaged over all ground truth masks.
         """
-        all_ious_per_gt = [] # Lista per raccogliere il miglior IoU per ogni maschera GT
+        all_ious_for_each_gt_mask = [] # Stores the best IoU found for each GT mask
 
-        num_total_gt_masks = 0
-        num_preds_considered = 0
+        for pred_dict, target_dict in zip(all_preds, all_targets):
+            pred_masks_tensor = pred_dict.get('masks', torch.empty(0, 1, 0, 0)) # (N_preds, 1, H, W)
+            gt_masks_tensor = target_dict.get('masks', torch.empty(0, 0, 0))     # (N_gt, H, W)
 
-        for img_idx, (pred_dict, target_dict) in enumerate(zip(all_preds, all_targets)):
-            # Estrai maschere predette e GT, gestendo casi vuoti
-            pred_masks_tensor = pred_dict.get('masks', torch.empty(0, 1, 0, 0)) # (N, 1, H, W)
-            gt_masks_tensor = target_dict.get('masks', torch.empty(0, 0, 0))     # (N, H, W)
-
-            # --- Conversione a Numpy e Binarizzazione ---
-            # Predizioni: Binarizza e converti in numpy. MANTIENE la dimensione del canale se presente.
+            # --- Convert to NumPy and Binarize ---
+            # Predictions: Binarize and convert to numpy. Squeeze the channel dimension.
             pred_masks_np = (pred_masks_tensor.cpu().numpy() > mask_binarize_threshold).astype(np.uint8)
-            # -> pred_masks_np avrà shape (N_preds, 1, H, W) se l'input era così
-
-            # Ground Truth: Converti in numpy. Gestisci possibile dimensione canale extra.
-            gt_masks_np_raw = gt_masks_tensor.cpu().numpy().astype(np.uint8)
-            # Se le maschere GT hanno una dimensione canale extra (es. shape (N_gt, 1, H, W)), rimuovila.
-            if gt_masks_np_raw.ndim == 4 and gt_masks_np_raw.shape[1] == 1:
-                gt_masks_np = gt_masks_np_raw[:, 0, :, :] # -> shape (N_gt, H, W)
-            elif gt_masks_np_raw.ndim == 3:
-                gt_masks_np = gt_masks_np_raw # -> shape (N_gt, H, W) già corretta
-            else:
-                # Gestisci forme inattese o vuote
-                if gt_masks_np_raw.numel() == 0:
-                    gt_masks_np = np.empty((0, 0, 0), dtype=np.uint8)
-                else:
-                    print(f"Warning: Forma maschera GT inattesa: {gt_masks_np_raw.shape}")
-                    gt_masks_np = gt_masks_np_raw # Prova a procedere, ma potrebbe fallire
+            if pred_masks_np.ndim == 4 and pred_masks_np.shape[1] == 1:
+                pred_masks_np = pred_masks_np[:, 0, :, :] # -> shape (N_preds, H, W)
+            
+            # Ground Truth: Convert to numpy. Ensure it's (N_gt, H, W).
+            gt_masks_np = gt_masks_tensor.cpu().numpy().astype(np.uint8)
+            if gt_masks_np.ndim == 4 and gt_masks_np.shape[1] == 1: # Handle if GT also has channel dim
+                gt_masks_np = gt_masks_np[:, 0, :, :]
 
 
             num_preds = pred_masks_np.shape[0]
             num_gts = gt_masks_np.shape[0]
-            num_total_gt_masks += num_gts
-            num_preds_considered += num_preds
 
             if num_gts == 0:
-                continue # Non ci sono maschere GT in questa immagine, passa alla successiva
+                continue # No GT masks in this image, skip.
 
             if num_preds == 0:
-                # Se non ci sono predizioni, tutte le GT hanno IoU=0
-                all_ious_per_gt.extend([0.0] * num_gts)
+                # If no predictions, IoU for all GTs in this image is 0.
+                all_ious_for_each_gt_mask.extend([0.0] * num_gts)
                 continue
 
-            # --- Controllo Dimensioni H, W (dopo aver gestito i canali) ---
-            pred_h, pred_w = pred_masks_np.shape[2:] # Ottiene H, W da (N, 1, H, W)
-            gt_h, gt_w = gt_masks_np.shape[1:]     # Ottiene H, W da (N, H, W)
+            # --- Check H, W dimensions (after handling channels) ---
+            # This assumes all masks in a batch have same H,W, which should be true after dataloader
+            pred_h, pred_w = pred_masks_np.shape[1:] if num_preds > 0 else (0,0)
+            gt_h, gt_w = gt_masks_np.shape[1:] if num_gts > 0 else (0,0)
 
-            if pred_h != gt_h or pred_w != gt_w:
-                print(f"ATTENZIONE (img {img_idx}): Dimensioni H,W non corrispondono! Pred: ({pred_h},{pred_w}), GT: ({gt_h},{gt_w}). Impossibile calcolare IoU.")
-                # Se le dimensioni non combaciano, l'IoU per tutte le GT di questa immagine è 0
-                all_ious_per_gt.extend([0.0] * num_gts)
-                continue # Salta al prossimo immagine se le dimensioni non combaciano
+            if pred_h != gt_h or pred_w != gt_w :
+                 if num_preds > 0 and num_gts > 0 : # Only print if both exist but mismatch
+                    print(f"WARNING: H,W dimensions mismatch! Pred: ({pred_h},{pred_w}), GT: ({gt_h},{gt_w}). Cannot calculate IoU for this image.")
+                 all_ious_for_each_gt_mask.extend([0.0] * num_gts)
+                 continue
 
-            # Calcola matrice IoU: righe = GT, colonne = Predizioni
             iou_matrix = np.zeros((num_gts, num_preds))
 
-            for i in range(num_gts):
+            for i in range(num_gts): # Iterate over GT masks
                 gt_mask = gt_masks_np[i] # Shape (H, W)
-                if gt_mask.sum() == 0: continue # Salta maschere GT vuote
+                if gt_mask.sum() == 0: continue # Skip empty GT masks
 
-                for j in range(num_preds):
-                    # Estrai maschera predetta j-esima, ha shape (1, H, W)
-                    pred_mask_with_channel = pred_masks_np[j]
-
-                    # *** LA CORREZIONE CHIAVE È QUI ***
-                    # Rimuovi la dimensione del canale per ottenere shape (H, W)
-                    if pred_mask_with_channel.shape[0] == 1:
-                        pred_mask = pred_mask_with_channel[0]
-                    else:
-                        # Questo non dovrebbe succedere se l'input è standard
-                        print(f"Warning: Pred mask {j} ha shape inattesa {pred_mask_with_channel.shape}")
-                        pred_mask = pred_mask_with_channel # Prova ad usarla, potrebbe fallire dopo
-                        # Verifica se ha comunque le dimensioni H,W corrette
-                        if pred_mask.shape != (pred_h, pred_w):
-                            print(f"Skipping pred mask {j} due to unexpected shape post-indexing.")
-                            continue
-
-                    if pred_mask.sum() == 0: continue # Salta maschere predette vuote
-
-                    # Ora pred_mask e gt_mask dovrebbero entrambe avere shape (H, W)
-                    # Il controllo di shape qui sotto non dovrebbe più fallire se H,W combaciano
-                    # if pred_mask.shape != gt_mask.shape: # Check ridondante se H,W globali combaciano
-                    #     print(f"Shape mismatch INTERNO! GT {gt_mask.shape}, Pred {pred_mask.shape}")
-                    #     continue
-
-                    # Calcola Intersezione e Unione
+                for j in range(num_preds): # Iterate over predicted masks
+                    pred_mask = pred_masks_np[j] # Shape (H, W)
+                    if pred_mask.sum() == 0: continue # Skip empty predicted masks
+                    
                     intersection = np.logical_and(gt_mask, pred_mask).sum()
                     union = np.logical_or(gt_mask, pred_mask).sum()
 
                     if union > 0:
-                        iou = intersection / union
-                        iou_matrix[i, j] = iou
-                    # else: iou è 0 (già inizializzato)
-
-            # Trova il miglior IoU per ogni maschera Ground Truth
+                        iou_matrix[i, j] = intersection / union
+            
+            # For each GT mask, find the maximum IoU with any predicted mask
             if num_preds > 0:
-                max_iou_per_gt = iou_matrix.max(axis=1) # Trova il max IoU per ogni riga (GT)
-            else:
-                # Già gestito all'inizio del loop per immagine (num_preds == 0)
-                # max_iou_per_gt = np.zeros(num_gts) # Se non ci sono predizioni, IoU è 0
-                pass # max_iou_per_gt non viene usato se num_preds è 0
+                max_iou_per_gt = iou_matrix.max(axis=1) 
+            else: # Should have been caught by num_preds == 0 check earlier
+                max_iou_per_gt = np.zeros(num_gts)
+            
+            all_ious_for_each_gt_mask.extend(max_iou_per_gt.tolist())
 
-            # Aggiungi i migliori IoU per le GT di questa immagine alla lista totale
-            # (Se num_preds era 0, questo estende con zeri)
-            all_ious_per_gt.extend(max_iou_per_gt.tolist())
-
-
-        # --- Calcolo Finale e Statistiche ---
-        if not all_ious_per_gt:
-            # Questo succede se non c'erano maschere GT in nessuna immagine
-            print("Warning calculate_miou: Nessun IoU calcolato (nessuna maschera GT trovata nel set di valutazione).")
+        if not all_ious_for_each_gt_mask:
+            print("Warning: calculate_miou: No IoUs calculated (e.g., no GT masks found). Returning 0.0.")
             return 0.0
 
-        # Calcola la mIoU media su tutte le maschere GT considerate
-        miou = np.mean(all_ious_per_gt)
-
+        miou = np.mean(all_ious_for_each_gt_mask)
         return float(miou)
 
     def predict(self, image, score_threshold=0.5):
         """
-        Esegue la predizione su una singola immagine
+        Performs prediction on a single image.
         
         Args:
-            image: Immagine di input (numpy array o tensore)
-            score_threshold: Soglia di confidenza per le predizioni
+            image (np.ndarray or torch.Tensor): Input image.
+            score_threshold (float): Confidence threshold for predictions.
             
         Returns:
-            dict: Dizionario con maschere, scatole, punteggi e etichette sopra la soglia
+            dict: Dictionary with 'masks', 'boxes', 'scores', 'labels' above the threshold.
+                  Masks are binary numpy arrays (N, H, W).
         """
         self.model.eval()
         
-        # Converti l'immagine se necessario
+        # --- Image Preprocessing ---
         if isinstance(image, np.ndarray):
-            # Verifica che l'immagine sia nel formato corretto (H, W, C)
-            if image.ndim == 2:
-                # Immagine grayscale a singolo canale, aggiungi dimensione canale
-                image = np.expand_dims(image, axis=2)
-                image = np.repeat(image, 3, axis=2)  # Converti in RGB replicando il canale
-            elif image.shape[2] == 4:
-                # Immagine RGBA, elimina canale alpha
-                image = image[:, :, :3]
-            
-            # Normalizza l'immagine se non è già normalizzata
+            if image.ndim == 2: # Grayscale
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            elif image.shape[2] == 4: # RGBA
+                image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+
             if image.dtype == np.uint8:
-                # Converti da numpy a tensor e normalizza
-                image = torch.from_numpy(image.transpose((2, 0, 1))).float() / 255.0
-                # Normalizza con mean e std di ImageNet
-                image = torchvision.transforms.functional.normalize(
-                    image, 
-                    mean=[0.485, 0.456, 0.406], 
-                    std=[0.229, 0.224, 0.225]
-                )
+                image_tensor = torch.from_numpy(image.transpose((2, 0, 1))).float().div(255.0)
+            else: # Assuming already float and in range [0,1]
+                image_tensor = torch.from_numpy(image.transpose((2, 0, 1))).float()
         elif isinstance(image, torch.Tensor):
-            # Se è già un tensore, assicurati che sia nel formato corretto (C, H, W)
-            if image.dim() == 2:
-                # Immagine grayscale a singolo canale, aggiungi dimensione canale
-                image = image.unsqueeze(0)
-                image = image.repeat(3, 1, 1)  # Converti in RGB replicando il canale
-            elif image.dim() == 3 and image.shape[0] == 4:
-                # Immagine RGBA, elimina canale alpha
-                image = image[:3, :, :]
+            image_tensor = image.clone() # Work on a copy
+            if image_tensor.ndim == 2: # Grayscale
+                image_tensor = image_tensor.unsqueeze(0).repeat(3, 1, 1)
+            elif image_tensor.shape[0] == 1: # Single channel (likely grayscale)
+                image_tensor = image_tensor.repeat(3,1,1)
+            elif image_tensor.shape[0] == 4: # RGBA
+                image_tensor = image_tensor[:3, :, :]
             
-            # Normalizza se necessario (se i valori sono tra 0 e 255)
-            if image.max() > 1.0:
-                image = image / 255.0
-                # Normalizza con mean e std di ImageNet
-                image = torchvision.transforms.functional.normalize(
-                    image, 
-                    mean=[0.485, 0.456, 0.406], 
-                    std=[0.229, 0.224, 0.225]
-                )
+            if image_tensor.max() > 1.0 and image_tensor.dtype != torch.uint8 : # If float but not in [0,1]
+                image_tensor = image_tensor.div(255.0)
+            elif image_tensor.dtype == torch.uint8:
+                 image_tensor = image_tensor.float().div(255.0)
+
         else:
-            raise TypeError(f"Formato immagine non supportato: {type(image)}")
+            raise TypeError(f"Unsupported image format: {type(image)}")
+
+        if image_tensor.ndim == 3:
+            image_tensor = image_tensor.unsqueeze(0) # Add batch dimension
         
-        # Aggiungi dimensione batch
-        if image.dim() == 3:
-            image = image.unsqueeze(0)
+        image_tensor = image_tensor.to(self.device)
         
-        # Sposta sul device
-        image = image.to(self.device)
-        
+        empty_result = lambda: {'masks': np.array([]), 'boxes': np.array([]), 'scores': np.array([]), 'labels': np.array([])}
+
         try:
-            # Disabilita il calcolo dei gradienti
             with torch.no_grad():
-                # Esegui la predizione
-                predictions = self.model(image)
+                predictions = self.model(image_tensor)
             
-            # Estrai i risultati (prendi il primo elemento perché abbiamo un batch di 1)
-            if len(predictions) == 0:
-                # Nessuna predizione
-                return {
-                    'masks': np.array([]),
-                    'boxes': np.array([]),
-                    'scores': np.array([]),
-                    'labels': np.array([])
-                }
+            if not predictions or len(predictions) == 0:
+                return empty_result()
             
-            pred = predictions[0]
+            pred = predictions[0] # Results for the first (and only) image in the batch
             
-            # Sposta i tensori su CPU e converti in numpy
-            masks = pred['masks'].cpu().numpy()
-            boxes = pred['boxes'].cpu().numpy()
             scores = pred['scores'].cpu().numpy()
-            labels = pred['labels'].cpu().numpy()
+            keep_indices = scores > score_threshold
             
-            # Filtra per score threshold
-            keep = scores > score_threshold
-            masks = masks[keep]
-            boxes = boxes[keep]
-            scores = scores[keep]
-            labels = labels[keep]
+            masks_raw = pred['masks'].cpu().numpy()[keep_indices] # (N_kept, 1, H, W)
+            boxes = pred['boxes'].cpu().numpy()[keep_indices]
+            final_scores = scores[keep_indices]
+            labels = pred['labels'].cpu().numpy()[keep_indices]
             
-            # Converti le maschere in formato binario
-            # Le maschere sono in formato (N, 1, H, W)
-            if masks.size > 0:
-                binary_masks = (masks > 0.5).astype(np.uint8)
-                # Rimuovi la dimensione del canale se presente
-                if binary_masks.shape[1] == 1:
-                    binary_masks = np.squeeze(binary_masks, axis=1)
-            else:
-                binary_masks = np.array([])
+            binary_masks = np.array([])
+            if masks_raw.size > 0:
+                # Binarize masks (threshold > 0.5) and squeeze channel dimension
+                binary_masks = (masks_raw > 0.5).astype(np.uint8).squeeze(axis=1) # (N_kept, H, W)
             
             return {
                 'masks': binary_masks,
                 'boxes': boxes,
-                'scores': scores,
+                'scores': final_scores,
                 'labels': labels
             }
             
         except Exception as e:
-            print(f"Errore durante la predizione: {str(e)}")
-            # Ritorna un dizionario vuoto in caso di errore
-            return {
-                'masks': np.array([]),
-                'boxes': np.array([]),
-                'scores': np.array([]),
-                'labels': np.array([])
-            }
+            print(f"Error during prediction: {str(e)}")
+            return empty_result()
 
     def save(self, path):
         """
-        Salva il modello in un file
+        Saves the model's state_dict to a file.
         
         Args:
-            path: Percorso dove salvare il modello
+            path (str): Path to save the model.
         """
-        # Crea la directory se non esiste
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True) # Create directory if it doesn't exist
         
-        # Gestisce il salvataggio di modelli con DataParallel
-        if isinstance(self.model, torch.nn.DataParallel):
-            torch.save(self.model.module.state_dict(), path)
-        else:
-            torch.save(self.model.state_dict(), path)
-        print(f"Modello salvato in {path}")
+        # Handle saving models wrapped with DataParallel
+        model_state_dict = self.model.module.state_dict() if isinstance(self.model, torch.nn.DataParallel) else self.model.state_dict()
+        torch.save(model_state_dict, path)
+        print(f"Model saved to {path}")
 
     def load(self, path):
-        """Carica il modello da un file"""
+        """
+        Loads model weights from a file.
+        
+        Args:
+            path (str): Path to the model file.
+        
+        Returns:
+            bool: True if loading was successful, False otherwise.
+        """
         if not os.path.exists(path):
-            print(f"Attenzione: File del modello {path} non trovato")
+            print(f"Warning: Model file {path} not found.")
             return False
         
         try:
-            state_dict = torch.load(path, map_location=self.device, weights_only=True)
+            state_dict = torch.load(path, map_location=self.device) 
             
             if isinstance(self.model, torch.nn.DataParallel):
                 self.model.module.load_state_dict(state_dict)
             else:
                 self.model.load_state_dict(state_dict)
                 
-            print(f"Modello caricato da {path}")
+            print(f"Model loaded from {path}")
             return True
         except Exception as e:
-            print(f"Errore durante il caricamento del modello: {str(e)}")
+            print(f"Error loading model: {str(e)}")
             return False

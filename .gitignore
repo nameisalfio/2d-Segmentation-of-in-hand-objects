@@ -1,0 +1,45 @@
+# === Python cache and build files ===
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+*.pkl
+
+# === Jupyter Notebooks ===
+*.ipynb
+.ipynb_checkpoints/
+
+# === OS-specific files ===
+.DS_Store
+Thumbs.db
+
+# === Virtual environment folders ===
+env/
+venv/
+.hot3d/
+.hot3d
+
+# === Dataset cache folders (keep folder, ignore files) ===
+dataset_cache_visor/*
+!dataset_cache_visor/.gitkeep
+
+dataset_cache_hot3d/*
+!dataset_cache_hot3d/.gitkeep
+
+# === Model weights folder ===
+saved_models/*
+!saved_models/.gitkeep
+
+# === TensorBoard log folders ===
+tensorboard_logs_hot3d/*
+!tensorboard_logs_hot3d/.gitkeep
+
+tensorboard_logs_visor/*
+!tensorboard_logs_visor/.gitkeep
+
+# === Other binary or large data files ===
+*.npy
+*.pth
+*.pt
+*.h5

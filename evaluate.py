@@ -104,7 +104,7 @@ def calculate_metrics(predictions, targets, iou_threshold=0.5):
         "false_negatives": fn
     }
 
-def evaluate_model(args):
+def run_evaluation(args):
     """
     Funzione principale per la valutazione del modello
     
@@ -257,7 +257,7 @@ def main():
                         help='Tipo di backbone utilizzato nel modello')
     
     args = parser.parse_args()
-    evaluate_model(args)
+    run_evaluation(args)
 
 if __name__ == "__main__":
     main()

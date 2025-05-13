@@ -25,7 +25,7 @@ mask_rcnn_project/
 Il file principale è `data/dataset.py` che coordina il processo completo. Per eseguire tutto il pipeline, usa:
 
 ```bash
-python data/dataset.py --action all --dataset_type both --max_clips all
+python data/dataset.py --action preprocess --dataset train --debug
 ```
 
 Questo comando eseguirà il preprocessing di tutti i clip di training e test, e creerà i dataloader per l'uso con PyTorch.
@@ -47,12 +47,6 @@ Questo comando eseguirà il preprocessing di tutti i clip di training e test, e 
 ```
 
 ## Esempi di utilizzo
-
-### Preprocessing di un sottoinsieme di clip di training
-
-```bash
-python data/dataset.py --action preprocess --dataset_type train --max_clips 5 --debug
-```
 
 ### Creazione dei dataloader usando dati esistenti
 
@@ -78,33 +72,29 @@ Un oggetto è considerato "in mano" se soddisfa almeno uno dei seguenti criteri:
 
 Il sistema genera tre file principali:
 
-1. `train_dataset.npy`: Dati di training (80% del dataset di training)
-2. `val_dataset.npy`: Dati di validazione (20% del dataset di training)
+1. `train_dataset.npy`: Dati di training 
+2. `val_dataset.npy`: Dati di validazione 
 3. `test_dataset.npy`: Dati di test
 
 Ogni file contiene una lista di dizionari con la seguente struttura:
 
 ```python
 {
-    "frame_id": "000042",               # ID del frame
-    "camera_id": "214-1",               # ID della telecamera
-    "image_path": "/path/to/image.jpg", # Percorso all'immagine
-    "mask": np.array(...),              # Maschera binaria degli oggetti in mano
-    "image_shape": (480, 640),          # Dimensioni dell'immagine
-    "clip_name": "clip-001849"          # Nome del clip
+    "image_id": 42743,                                     # ID univoco dell'immagine
+    "file_name": "camera_42743.jpg",                       # Nome del file immagine
+    "image_path": "/storage/aspoto/visor_egohos_synth/images/camera_42743.jpg",  # Percorso assoluto
+    "mask": np.ndarray shape=(720, 1280), dtype=np.uint8,  # Maschera binaria complessiva
+    "individual_masks": [np.ndarray],                      # Lista di maschere individuali (una per oggetto)
+    "boxes": [[345.0, 555.0, 501.0, 720.0]],                # Bounding boxes [x1, y1, x2, y2]
+    "labels": [2],                                         # Classi associate agli oggetti
+    "object_ids": [194353],                                # ID univoci degli oggetti
+    "image_shape": (720, 1280)                             # Dimensioni dell'immagine (altezza, larghezza)
 }
 ```
 
-I dataloader PyTorch restituiscono coppie `(image, mask)` dove:
-- `image`: Tensore PyTorch dell'immagine normalizzata (3, H, W)
-- `mask`: Tensore PyTorch della maschera binaria (H, W)
+I dataloader PyTorch restituiscono .. specificare come sono organizzati 
 
 ## Main
-
-### Preprocessing
-```bash
-python main.py preprocess --dataset_type train --max_frames 10
-```
 
 ### Addestramento
 ```bash

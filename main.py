@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script principale per l'addestramento, la valutazione e l'inferenza 
-del modello Mask R-CNN sul dataset HOT3D per la segmentazione di oggetti in mano.
+del modello Mask R-CNN sul dataset Visor per la segmentazione di oggetti in mano.
 """
 
 import os
@@ -13,32 +13,20 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Importa i moduli
-from train import train_model
-from evaluate import evaluate_model
+from train import run_train
+from evaluate import run_evaluation
 from inference import run_inference
-from data.dataset import build_dataset_files
-from config import MODEL_SAVE_PATH, NUM_CLASSES, NUM_EPOCHS, LEARNING_RATE, BATCH_SIZE
+from config import *
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Mask R-CNN per la segmentazione di oggetti in mano nel dataset HOT3D',
+        description='Mask R-CNN per la segmentazione di oggetti in mano nel dataset Visor',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
     # Comandi principali
     subparsers = parser.add_subparsers(dest='command', help='Comando da eseguire')
     subparsers.required = True
-    
-    # Comando per il preprocessing dei dati
-    preprocess_parser = subparsers.add_parser('preprocess', help='Preprocessing del dataset')
-    preprocess_parser.add_argument('--dataset_type', choices=['train', 'test', 'both'], default='both',
-                        help='Tipo di dataset da processare')
-    preprocess_parser.add_argument('--max_clips', default='all', 
-                        help='Numero massimo di clip da processare (o "all" per tutti)')
-    preprocess_parser.add_argument('--max_frames', type=int, default=None,
-                        help='Numero massimo di frame da selezionare randomicamente per ogni clip')
-    preprocess_parser.add_argument('--debug', action='store_true', help='Salva immagini di debug')
-    preprocess_parser.add_argument('--cameras', nargs='+', default=None, help='ID telecamere da processare')
     
     # Comando per l'addestramento
     train_parser = subparsers.add_parser('train', help='Addestramento del modello')
@@ -100,17 +88,6 @@ def main():
     parser.add_argument('--show', action='store_true',
                         help='Mostra le immagini elaborate (solo per singola immagine)')
     
-    # Comando per la visualizzazione
-    visualize_parser = subparsers.add_parser('visualize', help='Visualizzazione campioni dataset')
-    visualize_parser.add_argument('--dataset', choices=['train', 'val', 'test'], default='train',
-                        help='Dataset da visualizzare')
-    visualize_parser.add_argument('--num_samples', type=int, default=10,
-                        help='Numero di campioni da visualizzare')
-    visualize_parser.add_argument('--output_dir', default='sample_visualizations',
-                        help='Directory dove salvare le visualizzazioni')
-    visualize_parser.add_argument('--seed', type=int, default=42,
-                        help='Seed per la selezione random dei campioni')
-    
     # Parsing degli argomenti
     args = parser.parse_args()
     
@@ -118,35 +95,17 @@ def main():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] Esecuzione comando: {args.command}")
     
-    # Esegui il comando appropriato
-    if args.command == 'preprocess':
-        print("Avvio preprocessing dataset...")
-        process_train = args.dataset_type in ['train', 'both']
-        process_test = args.dataset_type in ['test', 'both']
-        build_dataset_files(process_train, process_test, args.max_clips, args.debug, args.max_frames)
-    
-    elif args.command == 'train':
+    if args.command == 'train':
         print("Avvio addestramento modello...")
-        train_model(args)
+        run_train(args)
     
     elif args.command == 'evaluate':
         print("Avvio valutazione modello...")
-        evaluate_model(args)
+        run_evaluation(args)
     
     elif args.command == 'inference':
         print("Avvio inferenza modello...")
         run_inference(args)
-    
-    elif args.command == 'visualize':
-        print("Avvio visualizzazione dataset...")
-        # Importa qui per evitare dipendenze circolari
-        from visualize_samples import visualize_samples
-        visualize_samples(
-            dataset_path=f"dataset_cache/{args.dataset}_dataset.npy",
-            output_dir=f"{args.output_dir}/{args.dataset}",
-            num_samples=args.num_samples,
-            random_seed=args.seed
-        )
     
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Comando {args.command} completato.")
 

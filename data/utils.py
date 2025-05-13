@@ -233,22 +233,3 @@ def save_debug_image(image, mask, output_path=None):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     cv2.imwrite(output_path, cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR))
 
-def clean_directory(directory):
-    """
-    Pulisce una directory eliminando le sottodirectory ma mantenendo i file .npy
-    
-    Args:
-        directory: Directory da pulire
-    """
-    if not os.path.exists(directory):
-        return
-    
-    # Rimuovi tutte le sottodirectory
-    for item in os.listdir(directory):
-        item_path = os.path.join(directory, item)
-        if os.path.isdir(item_path):
-            import shutil
-            print(f"Rimozione della directory: {item_path}")
-            shutil.rmtree(item_path)
-    
-    print(f"Directory {directory} pulita.")

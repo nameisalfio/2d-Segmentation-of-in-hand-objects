@@ -12,12 +12,12 @@ from torchvision.models.detection.mask_rcnn import MaskRCNN
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 from torch.utils.tensorboard import SummaryWriter
-from config import TENSORBOARD_DIR, NUM_CLASSES, MODEL_SAVE_PATH, NUM_EPOCHS, LEARNING_RATE
+from config import *
 
 class MaskRCNNModel:
 
     def __init__(self, num_classes=NUM_CLASSES, pretrained=True, backbone_name="resnext101_32x8d", 
-                clip_grad_norm=0.0, optimizer_type='sgd'):
+            clip_grad_norm=0.0, optimizer_type='sgd'):
         """
         Inizializza il modello Mask R-CNN con backbone ResNeXt-101-FPN
         
@@ -374,9 +374,9 @@ class MaskRCNNModel:
 
         Args:
             all_preds: Lista di dizionari con le predizioni filtrate per score.
-                       Ogni dizionario contiene 'masks': Tensor (N_preds, 1, H, W) float [0,1]
+                    Ogni dizionario contiene 'masks': Tensor (N_preds, 1, H, W) float [0,1]
             all_targets: Lista di dizionari con i ground truth.
-                         Ogni dizionario contiene 'masks': Tensor (N_gt, H, W) o (N_gt, 1, H, W) uint8/bool
+                        Ogni dizionario contiene 'masks': Tensor (N_gt, H, W) o (N_gt, 1, H, W) uint8/bool
             iou_threshold: Soglia IoU per considerare una corrispondenza (non usata per mIoU puro).
             mask_binarize_threshold: Soglia per convertire le maschere predette (float) in binarie.
 
@@ -428,31 +428,14 @@ class MaskRCNNModel:
                 continue
 
             # --- Controllo Dimensioni H, W (dopo aver gestito i canali) ---
-            # Assicurati che altezza e larghezza corrispondano tra pred e GT
-            # Fallback: Prova a ridimensionare se necessario (ma è meglio risolvere nel dataset)
             pred_h, pred_w = pred_masks_np.shape[2:] # Ottiene H, W da (N, 1, H, W)
             gt_h, gt_w = gt_masks_np.shape[1:]     # Ottiene H, W da (N, H, W)
 
             if pred_h != gt_h or pred_w != gt_w:
-                 print(f"ATTENZIONE (img {img_idx}): Dimensioni H,W non corrispondono! Pred: ({pred_h},{pred_w}), GT: ({gt_h},{gt_w}). Impossibile calcolare IoU.")
-                 # Se le dimensioni non combaciano, l'IoU per tutte le GT di questa immagine è 0
-                 all_ious_per_gt.extend([0.0] * num_gts)
-                 # Puoi provare a usare skimage.transform.resize qui come fallback, ma è rischioso:
-                 # try:
-                 #     from skimage.transform import resize
-                 #     print(f"Warning (img {img_idx}): Tentativo di ridimensionamento GT a ({pred_h},{pred_w})...")
-                 #     gt_masks_np_resized = np.array([resize(gt, (pred_h, pred_w), order=0, preserve_range=True, anti_aliasing=False) for gt in gt_masks_np]).astype(np.uint8)
-                 #     gt_masks_np = gt_masks_np_resized
-                 #     print("Ridimensionamento completato.")
-                 # except ImportError:
-                 #     print("Skipping resize: skimage non trovata.")
-                 #     all_ious_per_gt.extend([0.0] * num_gts)
-                 #     continue
-                 # except Exception as e:
-                 #     print(f"Errore durante il resize: {e}")
-                 #     all_ious_per_gt.extend([0.0] * num_gts)
-                 #     continue
-                 continue # Salta al prossimo immagine se le dimensioni non combaciano
+                print(f"ATTENZIONE (img {img_idx}): Dimensioni H,W non corrispondono! Pred: ({pred_h},{pred_w}), GT: ({gt_h},{gt_w}). Impossibile calcolare IoU.")
+                # Se le dimensioni non combaciano, l'IoU per tutte le GT di questa immagine è 0
+                all_ious_per_gt.extend([0.0] * num_gts)
+                continue # Salta al prossimo immagine se le dimensioni non combaciano
 
             # Calcola matrice IoU: righe = GT, colonne = Predizioni
             iou_matrix = np.zeros((num_gts, num_preds))
@@ -468,15 +451,15 @@ class MaskRCNNModel:
                     # *** LA CORREZIONE CHIAVE È QUI ***
                     # Rimuovi la dimensione del canale per ottenere shape (H, W)
                     if pred_mask_with_channel.shape[0] == 1:
-                         pred_mask = pred_mask_with_channel[0]
+                        pred_mask = pred_mask_with_channel[0]
                     else:
-                         # Questo non dovrebbe succedere se l'input è standard
-                         print(f"Warning: Pred mask {j} ha shape inattesa {pred_mask_with_channel.shape}")
-                         pred_mask = pred_mask_with_channel # Prova ad usarla, potrebbe fallire dopo
-                         # Verifica se ha comunque le dimensioni H,W corrette
-                         if pred_mask.shape != (pred_h, pred_w):
-                             print(f"Skipping pred mask {j} due to unexpected shape post-indexing.")
-                             continue
+                        # Questo non dovrebbe succedere se l'input è standard
+                        print(f"Warning: Pred mask {j} ha shape inattesa {pred_mask_with_channel.shape}")
+                        pred_mask = pred_mask_with_channel # Prova ad usarla, potrebbe fallire dopo
+                        # Verifica se ha comunque le dimensioni H,W corrette
+                        if pred_mask.shape != (pred_h, pred_w):
+                            print(f"Skipping pred mask {j} due to unexpected shape post-indexing.")
+                            continue
 
                     if pred_mask.sum() == 0: continue # Salta maschere predette vuote
 
@@ -510,28 +493,12 @@ class MaskRCNNModel:
 
         # --- Calcolo Finale e Statistiche ---
         if not all_ious_per_gt:
-             # Questo succede se non c'erano maschere GT in nessuna immagine
-             print("Warning calculate_miou: Nessun IoU calcolato (nessuna maschera GT trovata nel set di valutazione).")
-             return 0.0
+            # Questo succede se non c'erano maschere GT in nessuna immagine
+            print("Warning calculate_miou: Nessun IoU calcolato (nessuna maschera GT trovata nel set di valutazione).")
+            return 0.0
 
         # Calcola la mIoU media su tutte le maschere GT considerate
         miou = np.mean(all_ious_per_gt)
-
-        # Stampa statistiche IoU dettagliate
-        if print_debug:
-            ious_np = np.array(all_ious_per_gt)
-            print(f"Statistiche IoU per GT (calcolate su {len(ious_np)} maschere GT totali):")
-            print(f"  Min IoU: {ious_np.min():.4f}")
-            print(f"  Max IoU: {ious_np.max():.4f}")
-            print(f"  Median IoU: {np.median(ious_np):.4f}")
-            # Conta quante GT hanno trovato una corrispondenza sopra certe soglie
-            print(f"  GT con IoU > 0.1: {(ious_np > 0.1).sum()}/{len(ious_np)} ({(ious_np > 0.1).mean()*100:.2f}%)")
-            print(f"  GT con IoU > 0.25: {(ious_np > 0.25).sum()}/{len(ious_np)} ({(ious_np > 0.25).mean()*100:.2f}%)")
-            print(f"  GT con IoU > 0.5: {(ious_np > 0.5).sum()}/{len(ious_np)} ({(ious_np > 0.5).mean()*100:.2f}%)")
-            print(f"  GT con IoU > 0.75: {(ious_np > 0.75).sum()}/{len(ious_np)} ({(ious_np > 0.75).mean()*100:.2f}%)")
-            print(f"mIoU Finale (media su GT): {miou:.4f}")
-            # print(f"Numero totale maschere GT: {num_total_gt_masks}") # Uguale a len(ious_np)
-            # print(f"Numero totale predizioni considerate (post-filtro score): {num_preds_considered}") # Utile per vedere quante predizioni vengono fatte
 
         return float(miou)
 
@@ -680,7 +647,6 @@ class MaskRCNNModel:
             return False
         
         try:
-            # Aggiungi weights_only=True per risolvere il warning
             state_dict = torch.load(path, map_location=self.device, weights_only=True)
             
             if isinstance(self.model, torch.nn.DataParallel):

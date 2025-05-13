@@ -11,7 +11,7 @@ from models import MaskRCNNModel
 from data.dataset import create_data_loaders
 from config import MODEL_SAVE_PATH, NUM_EPOCHS, LEARNING_RATE, BATCH_SIZE, NUM_CLASSES, DATASET_CACHE_DIR, MODELS_DIR
 
-def train_model(args):
+def run_train(args):
     """
     Funzione principale per l'addestramento del modello
     
@@ -19,7 +19,7 @@ def train_model(args):
         args: Argomenti da riga di comando
     """
     print("=" * 50)
-    print("ADDESTRAMENTO MASK R-CNN PER HOT3D DATASET")
+    print("ADDESTRAMENTO MASK R-CNN")
     print("=" * 50)
     
     # Verifica disponibilità della GPU
@@ -127,7 +127,7 @@ def train_model(args):
         print(f"Modello di emergenza salvato in: {emergency_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Addestramento Mask R-CNN per HOT3D dataset')
+    parser = argparse.ArgumentParser(description='Addestramento Mask R-CNN')
     
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
                         help='Dimensione del batch')
@@ -152,7 +152,7 @@ def main():
                         help='Ottimizzatore da utilizzare')
     
     args = parser.parse_args()
-    train_model(args)
+    run_train(args)
 
 if __name__ == "__main__":
     main()

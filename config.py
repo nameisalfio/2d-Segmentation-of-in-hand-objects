@@ -10,8 +10,10 @@ PROJECT_DIR = os.path.join(HOME_DIR, "mask_rcnn_project")
 MODELS_DIR = os.path.join(PROJECT_DIR, "saved_models")
 RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
 DEBUG_OUTPUT_DIR = os.path.join(PROJECT_DIR, "debug_output")
-DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache")
-TENSORBOARD_DIR = os.path.join(PROJECT_DIR, "tensorboard_logs")
+TENSORBOARD_DIR = os.path.join(PROJECT_DIR, "tensorboard_logs_visor")
+
+DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_hot3d")
+#DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_visor")
 
 # Crea le directory se non esistono
 for dir_path in [MODELS_DIR, RESULTS_DIR, DEBUG_OUTPUT_DIR, DATASET_CACHE_DIR, TENSORBOARD_DIR]:
@@ -21,10 +23,6 @@ for dir_path in [MODELS_DIR, RESULTS_DIR, DEBUG_OUTPUT_DIR, DATASET_CACHE_DIR, T
 TRAIN_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "train_dataset.npy")
 VAL_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "val_dataset.npy")
 TEST_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "test_dataset.npy")
-
-TRAIN_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "train_dataset_reduced_1000.npy")
-VAL_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "val_dataset_reduced_1000.npy")
-TEST_CACHE_PATH = os.path.join(DATASET_CACHE_DIR, "test_dataset_reduced_100.npy")
 
 # Parametri di addestramento
 BATCH_SIZE = 2

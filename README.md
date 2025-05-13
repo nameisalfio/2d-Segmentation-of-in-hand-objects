@@ -86,7 +86,7 @@ Ensure that directories like `MODELS_DIR`, `RESULTS_DIR`, `DATASET_CACHE_DIR` (e
 ### Downloads
 Pre-trained models, dataset caches, and TensorBoard logs corresponding to the results shown in this README can be downloaded using the following links:
 
-📁 [Google Drive folder (all assets)]([https://drive.google.com/drive/folders/1F6tImvDPQh9okrcBbFFzBld3Q8LJgAqL](https://drive.google.com/uc?export=download&id=155Q0rV3RSJzD7LXe5_njGbvBq70_eOXD))
+📁 [Google Drive folder (all assets)](https://drive.google.com/uc?export=download&id=155Q0rV3RSJzD7LXe5_njGbvBq70_eOXD)
 
 The folder structure on Google Drive mirrors the local project structure:
 - `saved_models/`: Contains trained model checkpoints (.pth files).

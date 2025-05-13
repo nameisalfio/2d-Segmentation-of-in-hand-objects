@@ -229,12 +229,12 @@ Visualizations from the VISOR dataset processed samples, typically focusing on o
 <div align="center">
     <img src="assets/visor_mask.png" width="700" alt="VISOR Dataset - Original, Mask, Overlay"/>
 </div>
-*This composite image from the VISOR dataset displays: 1. The original egocentric view. 2. The binary segmentation mask for an in-hand object (e.g., a phone, highlighted in blue). 3. The mask overlaid on the original image. Text annotations "Immagine originale", "Maschera", "Sovrapposizione" (Original Image, Mask, Overlay) might be present from the visualization script.*
+This composite image from the VISOR dataset displays: 1. The original egocentric view. 2. The binary segmentation mask for an in-hand object (e.g., a phone, highlighted in blue). 3. The mask overlaid on the original image. Text annotations "Immagine originale", "Maschera", "Sovrapposizione" (Original Image, Mask, Overlay) might be present from the visualization script.
 
 <div align="center">
     <img src="assets/visor_overlayed.png" width="400" alt="VISOR Dataset - Overlay Example"/>
 </div>
-*A closer view of the mask overlaid on the original image from the VISOR dataset, showcasing the segmented in-hand object (e.g., phone).*
+A closer view of the mask overlaid on the original image from the VISOR dataset, showcasing the segmented in-hand object (e.g., phone).
 
 **Training Progress (TensorBoard - VISOR):**
 Metrics monitored during training on the VISOR dataset.
@@ -242,12 +242,12 @@ Metrics monitored during training on the VISOR dataset.
 <div align="center">
     <img src="assets/visor_losses.png" width="600" alt="VISOR Training and Validation Loss"/>
 </div>
-*Loss Plot (VISOR): Shows `Loss/train` and `Loss/val` curves. Both decrease over epochs, indicating learning. For this example run, values reached approximately 0.2 (train) and 0.22 (validation) after around 29 epochs/steps.*
+Loss Plot (VISOR): Shows `Loss/train` and `Loss/val` curves. Both decrease over epochs, indicating learning. For this example run, values reached approximately 0.2 (train) and 0.22 (validation) after around 29 epochs/steps.
 
 <div align="center">
     <img src="assets/visor_mIoU.png" width="300" alt="VISOR Validation mIoU"/>
 </div>
-*mIoU Plot (VISOR): Displays `mIoU/val` (validation Mean Intersection over Union). The mIoU increases and plateaus around 0.86, demonstrating good segmentation performance on the VISOR validation set for this particular training run.*
+mIoU Plot (VISOR): Displays `mIoU/val` (validation Mean Intersection over Union). The mIoU increases and plateaus around 0.86, demonstrating good segmentation performance on the VISOR validation set for this particular training run.
 
 ---
 
@@ -259,12 +259,12 @@ Visualizations from the HOT3D dataset processed samples, for instance, segmentin
 <div align="center">
     <img src="assets/hot3d_mask.png" width="600" alt="HOT3D Dataset - Original, Mask, Overlay"/>
 </div>
-*This composite image from the HOT3D dataset shows: 1. The original egocentric view with hands on a keyboard. 2. The binary segmentation mask for the keyboard (highlighted in blue). 3. The mask overlaid on the original image. Text annotations "Immagine originale", "Maschera", "Sovrapposizione" might be present.*
+This composite image from the HOT3D dataset shows: 1. The original egocentric view with hands on a keyboard. 2. The binary segmentation mask for the keyboard (highlighted in blue). 3. The mask overlaid on the original image. Text annotations "Immagine originale", "Maschera", "Sovrapposizione" might be present.
 
 <div align="center">
     <img src="assets/hot3d_overlayed.png" width="400" alt="HOT3D Dataset - Overlay Example"/>
 </div>
-*A closer view of the mask overlaid on the original image from the HOT3D dataset, highlighting the segmented keyboard.*
+A closer view of the mask overlaid on the original image from the HOT3D dataset, highlighting the segmented keyboard.
 
 **Training Progress (TensorBoard - HOT3D):**
 Metrics monitored during training on the HOT3D dataset.
@@ -272,12 +272,12 @@ Metrics monitored during training on the HOT3D dataset.
 <div align="center">
     <img src="assets/hot3d_losses.png" width="600" alt="HOT3D Training and Validation Loss"/>
 </div>
-*Loss Plot (HOT3D): Shows `Loss/train` and `Loss/val` curves. Both decrease over epochs. For this example run, values reached approximately 0.38 (train) and 0.53 (validation) after around 49-50 epochs/steps.*
+Loss Plot (HOT3D): Shows `Loss/train` and `Loss/val` curves. Both decrease over epochs. For this example run, values reached approximately 0.38 (train) and 0.53 (validation) after around 49-50 epochs/steps.
 
 <div align="center">
-    <img src="assets/hot3d_miou.png" width="300" alt="HOT3D Validation mIoU"/>
+    <img src="assets/hot3d_mIoU.png" width="300" alt="HOT3D Validation mIoU"/>
 </div>
-*mIoU Plot (HOT3D): Displays `mIoU/val`. The mIoU increases and plateaus around 0.50, indicating the segmentation performance achieved on the HOT3D validation set for this training run.*
+mIoU Plot (HOT3D): Displays `mIoU/val`. The mIoU increases and plateaus around 0.50, indicating the segmentation performance achieved on the HOT3D validation set for this training run.
 
 ## Directory Structure
 

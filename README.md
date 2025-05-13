@@ -83,6 +83,19 @@ Modify `config.py` to set up essential paths:
 
 Ensure that directories like `MODELS_DIR`, `RESULTS_DIR`, `DATASET_CACHE_DIR` (e.g., `dataset_cache_visor`, `dataset_cache_hot3d`), etc., defined in `config.py` are writable.
 
+### Downloads
+Pre-trained models, dataset caches, and TensorBoard logs corresponding to the results shown in this README can be downloaded from the following Google Drive link:
+
+Google Drive: https://drive.google.com/drive/folders/1F6tImvDPQh9okrcBbFFzBld3Q8LJgAqL
+The folder structure on Google Drive mirrors the local project structure for these assets:
+- saved_models/: Contains trained model checkpoints (.pth files).
+- dataset_cache_visor/: Preprocessed .npy cache files for the VISOR dataset.
+- dataset_cache_hot3d/: Preprocessed .npy cache files for the HOT3D dataset.
+- tensorboard_logs_visor/: TensorBoard event files for VISOR training runs.
+- tensorboard_logs_hot3d/: TensorBoard event files for HOT3D training runs.
+
+You can download these and place them in the corresponding directories within your local project structure to skip certain preprocessing or training steps.
+
 ## Dataset Preparation
 
 The system relies on `.npy` cache files for efficient data loading. These are generated from your raw dataset.

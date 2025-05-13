@@ -6,7 +6,7 @@ HOME_DIR = os.path.expanduser("/storage/aspoto") # User's home directory, specif
 HOT3D_DATASET_PATH = os.path.join(HOME_DIR, "visor_egohos_synth") # Path to the primary dataset
 
 # Project directories
-PROJECT_DIR = os.path.join(HOME_DIR, "mask_rcnn_project")
+PROJECT_DIR = os.path.join(HOME_DIR, "2d_Segmentation_of_in-hand_objects")
 MODELS_DIR = os.path.join(PROJECT_DIR, "saved_models")
 RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
 DEBUG_OUTPUT_DIR = os.path.join(PROJECT_DIR, "debug_output")

@@ -1,25 +1,24 @@
 # 2D Segmentation of In-Hand Objects using Mask R-CNN
 
-This task focuses on **predicting a binary 2D mask for objects held in hand**, given an input image. This segmentation step is crucial for the subsequent 3D lifting of handheld objects (covered in Section 4.4) and is also useful for downstream applications such as hand state classification or activity recognition in videos. The goal is to accurately segment in-hand objects to support these applications.
+This task focuses on **predicting a binary 2D mask for objects held in hand**, given an input image. This segmentation step is crucial for the subsequent 3D lifting of handheld objects and is also useful for downstream applications such as hand state classification or activity recognition in videos. The goal is to accurately segment in-hand objects to support these applications.
 
 - Inputs:
-Input Images: Multi-view image streams captured by recording devices such as Aria and Oculus Quest 3, providing the necessary visual data for segmentation.
-Ground-Truth Masks: Binary masks indicating the exact location of objects held in hand within the input images. These masks serve as a reference for evaluating the accuracy of predicted segmentations.
-
+    - Input Images: Egocentric images, specifically from the `visor_hoi_synth` dataset (see below).
+    - Ground-Truth Masks: Binary masks indicating the exact location of objects held in hand within the input images, provided by the `visor_hoi_synth` dataset. These masks serve as a reference for evaluating the accuracy of predicted segmentations.
 - Output:
-Predicted 2D Masks: Binary 2D masks generated for objects held in hand. These masks highlight the regions in the image corresponding to handheld objects and serve as a foundation for further processing.
+    - Predicted 2D Masks: Binary 2D masks generated for objects held in hand. These masks highlight the regions in the image corresponding to handheld objects and serve as a foundation for further processing.
 
-
-This project implements a Mask R-CNN model for detecting and segmenting objects held in hand in egocentric videos. It leverages datasets like VISOR and potentially HOT3D (as indicated by cache and visualization directories). The project provides an end-to-end pipeline including data preprocessing, model training, evaluation, and inference.
+This project implements a Mask R-CNN model for detecting and segmenting objects held in hand in egocentric videos. It **primarily leverages `visor_hoi_synth`, a synthetic dataset component of the HOI-Synth benchmark**. The HOI-Synth benchmark (Leonardi et al., ECCV 2024) extends existing egocentric datasets like EPIC-KITCHENS VISOR with automatically labeled synthetic data. The `visor_hoi_synth` data specifically provides synthetic images and annotations tailored for hand-object interaction tasks, designed to augment or be used with the real VISOR dataset. This project demonstrates an end-to-end pipeline including data preprocessing, model training, evaluation, and inference using these synthetic data.
+(The project structure also shows adaptability for other datasets like HOT3D, as indicated by some cache and visualization directories, but the core work presented here focuses on `visor_hoi_synth`.)
 
 ## Project Overview
 
-The primary goal is to accurately segment objects that a person is interacting with, as viewed from a first-person perspective. This is achieved using a Mask R-CNN architecture built with PyTorch.
+The primary goal is to accurately segment objects that a person is interacting with, as viewed from a first-person perspective, using synthetic egocentric data. This is achieved using a Mask R-CNN architecture built with PyTorch.
 
 ## Key Features
 
 *   **Mask R-CNN Model:** PyTorch-based implementation with configurable backbones (e.g., ResNeXt-101-FPN, ResNet-50-FPN).
-*   **Data Preprocessing:** Scripts to process raw dataset images and JSON annotations (from formats like VISOR or HOT3D) into optimized `.npy` cache files for faster loading during training.
+*   **Data Preprocessing:** Scripts to process raw `visor_hoi_synth` images and JSON annotations into optimized `.npy` cache files for faster loading during training. (Logic might be adaptable for other formats like VISOR or HOT3D).
 *   **Training Pipeline:**
     *   GPU support.
     *   Checkpoint loading to resume training.
@@ -79,23 +78,23 @@ As mentioned in the Prerequisites section.
 
 Modify `config.py` to set up essential paths:
 - `HOME_DIR`: Your base directory for the project and data.
-- `VISOR_EGOHOS_SYNTH` (or `HOT3D_DATASET_PATH` if you are using that primarily for raw data): Path to the root directory of your raw egocentric dataset (containing images and JSON annotations).
+- `VISOR_HOI_SYNTH_PATH` (or the variable you use, e.g., `VISOR_EGOHOS_SYNTH` if you've kept that name): Path to the root directory of your **`visor_hoi_synth` dataset**. This dataset is part of the [HOI-Synth benchmark](https://fpv-iplab.github.io/HOI-Synth/) and contains synthetic images and annotations.
+  * *Note: If your variable in `config.py` is still `VISOR_EGOHOS_SYNTH`, be aware that for this project, it's being used to point specifically to the `visor_hoi_synth` data.*
 
-Ensure that directories like `MODELS_DIR`, `RESULTS_DIR`, `DATASET_CACHE_DIR` (e.g., `dataset_cache_visor`, `dataset_cache_hot3d`), etc., defined in `config.py` are writable.
+Ensure that directories like `MODELS_DIR`, `RESULTS_DIR`, `DATASET_CACHE_DIR` (e.g., `dataset_cache_visor`), etc., defined in `config.py` are writable.
 
 ### Downloads
-Pre-trained models, dataset caches, and TensorBoard logs corresponding to the results shown in this README can be downloaded using the following links:
+Pre-trained models, dataset caches, and TensorBoard logs corresponding to the results shown in this README (trained on `visor_hoi_synth`) can be downloaded using the following links:
 
 📁 [Google Drive folder (all assets)](https://drive.google.com/uc?export=download&id=155Q0rV3RSJzD7LXe5_njGbvBq70_eOXD)
 
 The folder structure on Google Drive mirrors the local project structure:
-- `saved_models/`: Contains trained model checkpoints (.pth files).
-- `dataset_cache_visor/`: Preprocessed .npy cache files for the VISOR dataset.
-- `dataset_cache_hot3d/`: Preprocessed .npy cache files for the HOT3D dataset.
-- `tensorboard_logs_visor/`: TensorBoard event files for VISOR training runs.
-- `tensorboard_logs_hot3d/`: TensorBoard event files for HOT3D training runs.
+- `saved_models/`: Contains trained model checkpoints (.pth files) from `visor_hoi_synth` training.
+- `dataset_cache_visor/`: Preprocessed .npy cache files for the `visor_hoi_synth` dataset.
+- `tensorboard_logs_visor/`: TensorBoard event files for `visor_hoi_synth` training runs.
+(The `dataset_cache_hot3d/` and `tensorboard_logs_hot3d/` are for potential experiments with the HOT3D dataset, not the primary focus here.)
 
-You can download these and place them in the corresponding directories within your local project structure to skip certain preprocessing or training steps.
+You can download these and place them in the corresponding directories within your local project structure to skip certain preprocessing or training steps for `visor_hoi_synth`.
 
 ## Dataset Preparation
 
@@ -103,26 +102,27 @@ The system relies on `.npy` cache files for efficient data loading. These are ge
 
 ### Place Raw Dataset:
 
-Ensure your dataset (e.g., VISOR, HOT3D) is downloaded and located at the path specified by `VISOR_EGOHOS_SYNTH` (or equivalent) in `config.py`.
+Ensure your **`visor_hoi_synth` dataset** (obtained as part of the HOI-Synth benchmark) is downloaded and located at the path specified by your dataset path variable (e.g., `VISOR_HOI_SYNTH_PATH`) in `config.py`.
 
-For VISOR-like datasets (processed by `data/preprocessing.py` using `process_visor_dataset`), the expected structure is generally:
-
-```
-<VISOR_EGOHOS_SYNTH>/
-├── images/                 # Contains actual image files, possibly organized by clip/camera
-│   └── ...
+The HOI-Synth benchmark provides synthetic data. For `visor_hoi_synth`, the structure will generally follow the HOS format (compatible with VISOR-HOS):
+Use code with caution.
+Markdown
+<YOUR_VISOR_HOI_SYNTH_PATH>/ # This path should correspond to where you extracted HOI-Synth's images and annotations
+├── images/
+│ └── epic_kitchens_visor_synth/ # Or similar subfolder for VISOR-specific synthetic images from HOI-Synth
+│ ├── P01_01_frame_0000001234.jpg
+│ └── ...
 ├── annotations/
-│   ├── train.json
-│   ├── val.json
-│   └── test.json         # COCO-like annotation files
+│ ├── train.json # Annotations for the synthetic training split
+│ ├── val.json # Annotations for the synthetic validation split
+│ └── ... # (e.g., train_10.json for 10% data, or combined files if using them)
 └── ...
-```
 
-For HOT3D-like datasets (if a different preprocessing script is used), the structure might involve per-clip `images.json`, `objects.json`, `hands.json`, etc., within clip directories. The `data/utils.py` `is_object_in_hand` function suggests processing for such a structure.
+*Note: The exact subfolder name under `images/` (e.g., `epic_kitchens_visor_synth`) depends on how HOI-Synth organizes its downloaded synthetic images. Please verify this structure with your downloaded data. The `annotations.zip` and `images.zip` from HOI-Synth should be extracted such that `annotations/` contains the JSON files and `images/` contains subfolders for each synthetic dataset component (like `epic_kitchens_visor_synth`, `egohos_synth`, etc.). Your path should point to this root extracted directory.*
 
 ### Run Preprocessing Script:
 
-The `data/dataset.py` script (via its main function or `build_dataset_files`) triggers the preprocessing logic. To generate cache files for the VISOR dataset:
+The `data/dataset.py` script (via its main function or `build_dataset_files`) triggers the preprocessing logic. To generate cache files for the `visor_hoi_synth` dataset (assuming it's configured to be processed as "visor" type in your scripts, and its images are in a subfolder like `images/epic_kitchens_visor_synth/` relative to your dataset root):
 
 ```bash
 python data/dataset.py --action preprocess --dataset all [--debug]
@@ -222,52 +222,55 @@ python utils/visualization_npy.py --dataset train --num_samples 10 --output_dir 
 
 ## Configuration (`config.py`)
 
+## Configuration (`config.py`)
+
 The `config.py` file is central to the project, defining:
 
-- Paths to datasets (raw and cached), models, results, TensorBoard logs.
+- Paths to datasets (raw `visor_hoi_synth` data and its cache), models, results, TensorBoard logs.
 - Default training hyperparameters (batch size, epochs, learning rate).
-- Dataset-specific parameters (e.g., camera IDs, clip ranges for HOT3D, IoU/distance thresholds for "in-hand" heuristics).
+- Dataset-specific parameters (e.g., IoU/distance thresholds for "in-hand" heuristics, which might be less relevant if using direct annotations from `visor_hoi_synth`).
 - Visualization parameters (mask color, alpha).
+
+Modify this file to suit your environment and experimental setup. Ensure that dataset-related configurations in `config.py` correctly point to and are set up for the `visor_hoi_synth` data, even if variable names still contain "VISOR".
 
 Modify this file to suit your environment and experimental setup.
 
 ## Example Results & Visualizations
 
-The model produces segmentations for objects held in hand. The `utils/visualization_npy.py` script (or similar like `vis_hot3d`/`vis_visor` if they are scripts) can generate visualizations from the processed dataset. Inference results on new images will show similar overlays.
+The model produces segmentations for objects held in hand, trained and evaluated on the `visor_hoi_synth` dataset.
 
-### VISOR Dataset Examples
+### `visor_hoi_synth` (Synthetic VISOR Data) Examples
 
-**Input Image, Mask, and Overlay (VISOR):**
-Visualizations from the VISOR dataset processed samples, typically focusing on objects like phones.
-
-<div align="center">
-    <img src="assets/visor_mask.png" width="700" alt="VISOR Dataset - Original, Mask, Overlay"/>
-</div>
-This composite image from the VISOR dataset displays: 1. The original egocentric view. 2. The binary segmentation mask for an in-hand object (e.g., a phone, highlighted in blue). 3. The mask overlaid on the original image. Text annotations "Immagine originale", "Maschera", "Sovrapposizione" (Original Image, Mask, Overlay) might be present from the visualization script.
+**Input Image, Mask, and Overlay (`visor_hoi_synth`):**
+Visualizations from the `visor_hoi_synth` (synthetic) dataset processed samples. These images are synthetically generated but aim to mimic egocentric views with hand-object interactions.
 
 <div align="center">
-    <img src="assets/visor_overlayed.png" width="400" alt="VISOR Dataset - Overlay Example"/>
+    <img src="assets/visor_mask.png" width="700" alt="visor_hoi_synth Dataset - Original, Mask, Overlay"/>
 </div>
-A closer view of the mask overlaid on the original image from the VISOR dataset, showcasing the segmented in-hand object (e.g., phone).
-
-**Training Progress (TensorBoard - VISOR):**
-Metrics monitored during training on the VISOR dataset.
+This composite image from the `visor_hoi_synth` dataset displays: 1. The original synthetic egocentric view. 2. The binary segmentation mask for an in-hand object (e.g., a synthetic phone, highlighted in blue), provided by the dataset's ground truth. 3. The mask overlaid on the original image. Text annotations "Immagine originale", "Maschera", "Sovrapposizione" (Original Image, Mask, Overlay) might be present from the visualization script.
 
 <div align="center">
-    <img src="assets/visor_losses.png" width="600" alt="VISOR Training and Validation Loss"/>
+    <img src="assets/visor_overlayed.png" width="400" alt="visor_hoi_synth Dataset - Overlay Example"/>
 </div>
-Loss Plot (VISOR): Shows `Loss/train` and `Loss/val` curves. Both decrease over epochs, indicating learning. For this example run, values reached approximately 0.2 (train) and 0.22 (validation) after around 29 epochs/steps.
+A closer view of the mask overlaid on the original synthetic image from the `visor_hoi_synth` dataset, showcasing the segmented in-hand object.
+
+**Training Progress (TensorBoard - `visor_hoi_synth`):**
+Metrics monitored during training on the `visor_hoi_synth` dataset.
 
 <div align="center">
-    <img src="assets/visor_mIoU.png" width="300" alt="VISOR Validation mIoU"/>
+    <img src="assets/visor_losses.png" width="600" alt="visor_hoi_synth Training and Validation Loss"/>
 </div>
-mIoU Plot (VISOR): Displays `mIoU/val` (validation Mean Intersection over Union). The mIoU increases and plateaus around 0.86, demonstrating good segmentation performance on the VISOR validation set for this particular training run.
+Loss Plot (`visor_hoi_synth`): Shows `Loss/train` and `Loss/val` curves. Both decrease over epochs, indicating learning on the synthetic data. For this example run, values reached approximately 0.2 (train) and 0.22 (validation) after around 29 epochs/steps.
+
+<div align="center">
+    <img src="assets/visor_mIoU.png" width="300" alt="visor_hoi_synth Validation mIoU"/>
+</div>
+mIoU Plot (`visor_hoi_synth`): Displays `mIoU/val` (validation Mean Intersection over Union). The mIoU increases and plateaus around 0.86, demonstrating good segmentation performance on the `visor_hoi_synth` validation set for this particular training run.
 
 ---
 
-### HOT3D Dataset Examples
+### HOT3D Dataset Examples 
 
-**Input Image, Mask, and Overlay (HOT3D):**
 Visualizations from the HOT3D dataset processed samples, for instance, segmenting a keyboard.
 
 <div align="center">
@@ -335,6 +338,7 @@ Use code with caution.
 
 ## Additional Notes
 
-Dataset preprocessing can be time-consuming. The generated .npy cache files significantly speed up subsequent data loading.
-Ensure sufficient disk space for raw datasets, cached .npy files, saved models, and generated outputs.
-Training benefits greatly from a CUDA-enabled NVIDIA GPU.
+*   Dataset preprocessing can be time-consuming. The generated .npy cache files significantly speed up subsequent data loading.
+*   Ensure sufficient disk space for raw datasets, cached .npy files, saved models, and generated outputs.
+*   Training benefits greatly from a CUDA-enabled NVIDIA GPU.
+*   The term "VISOR" used in some directory names (e.g., `dataset_cache_visor`, `tensorboard_logs_visor`) or internal script configurations in this project refers to the processing pipeline and data derived from `visor_hoi_synth`, not the original real EPIC-KITCHENS VISOR dataset unless explicitly stated otherwise.

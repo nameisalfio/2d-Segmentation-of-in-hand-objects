@@ -2,8 +2,8 @@ import os
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HOME_DIR = os.path.expanduser("/storage/aspoto") # User's home directory, specific to this setup
-HOT3D_DATASET_PATH = os.path.join(HOME_DIR, "visor_egohos_synth") # Path to the primary dataset
+HOME_DIR = os.path.expanduser("/") # Change this to your home directory
+HOT3D_DATASET_PATH = os.path.join(HOME_DIR, "visor_egohos_synth") 
 
 # Project directories
 PROJECT_DIR = os.path.join(HOME_DIR, "2d_Segmentation_of_in-hand_objects")
@@ -12,8 +12,8 @@ RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
 DEBUG_OUTPUT_DIR = os.path.join(PROJECT_DIR, "debug_output")
 TENSORBOARD_DIR = os.path.join(PROJECT_DIR, "tensorboard_logs_visor")
 
-DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_hot3d")
-#DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_visor") # Alternative cache dir
+#DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_hot3d")
+DATASET_CACHE_DIR = os.path.join(PROJECT_DIR, "dataset_cache_visor") 
 
 # Create directories if they don't exist
 for dir_path in [MODELS_DIR, RESULTS_DIR, DEBUG_OUTPUT_DIR, DATASET_CACHE_DIR, TENSORBOARD_DIR]:

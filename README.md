@@ -222,8 +222,6 @@ python utils/visualization_npy.py --dataset train --num_samples 10 --output_dir 
 
 ## Configuration (`config.py`)
 
-## Configuration (`config.py`)
-
 The `config.py` file is central to the project, defining:
 
 - Paths to datasets (raw `visor_hoi_synth` data and its cache), models, results, TensorBoard logs.

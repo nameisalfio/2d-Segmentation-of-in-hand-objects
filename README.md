@@ -66,7 +66,7 @@ pip install numpy opencv-python tqdm pycocotools tensorboard
 ### Clone the Repository:
  
 ```bash
-git clone <your-repository-url>
+git clone git@github.com:nameisalfio/2d_Segmentation_of_in-hand_objects.git
 cd 2d_Segmentation_of_in-hand_objects
 ```
 
